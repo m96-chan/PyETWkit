@@ -20,8 +20,9 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def pytest_collection_modifyitems(
-    config: pytest.Config, items: list[pytest.Item]
-) -> None:  # noqa: ARG001
+    config: pytest.Config,  # noqa: ARG001
+    items: list[pytest.Item],
+) -> None:
     """Skip tests that require admin if not running as admin."""
     if not is_admin():
         skip_admin = pytest.mark.skip(reason="Requires administrator privileges")
