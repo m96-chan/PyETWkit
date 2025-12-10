@@ -47,12 +47,7 @@ crossbeam-channel = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
-criterion = "0.5"
 tempfile = "3"
-
-[[bench]]
-name = "event_parsing"
-harness = false
 
 [features]
 default = []

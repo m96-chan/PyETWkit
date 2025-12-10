@@ -43,3 +43,4 @@ def skip_if_not_admin() -> None:
     """Skip test if not running as admin."""
     if not is_admin():
         pytest.skip("Requires administrator privileges")
+
