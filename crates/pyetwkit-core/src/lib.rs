@@ -35,7 +35,7 @@ use pyo3::prelude::*;
 
 /// PyETWkit Python module
 #[pymodule]
-fn pyetwkit_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register Python classes
     m.add_class::<event::PyEtwEvent>()?;
     m.add_class::<provider::PyEtwProvider>()?;

@@ -6,7 +6,7 @@ import pytest
 def check_extension_available() -> bool:
     """Check if native extension is available."""
     try:
-        import pyetwkit_core  # noqa: F401
+        from pyetwkit import _core  # noqa: F401
 
         return True
     except ImportError:
@@ -25,27 +25,25 @@ class TestEnableProperty:
 
     def test_enable_property_exists(self) -> None:
         """Test that EnableProperty exists."""
-        import pyetwkit_core
+        from pyetwkit import _core
 
-        assert hasattr(pyetwkit_core, "EnableProperty")
+        assert hasattr(_core, "EnableProperty")
 
     def test_enable_property_stack_trace(self) -> None:
         """Test that STACK_TRACE flag exists."""
-        import pyetwkit_core
+        from pyetwkit._core import EnableProperty
 
-        enable_prop = pyetwkit_core.EnableProperty
-        assert hasattr(enable_prop, "STACK_TRACE") or hasattr(enable_prop, "StackTrace")
+        assert hasattr(EnableProperty, "STACK_TRACE") or hasattr(EnableProperty, "StackTrace")
 
     def test_enable_property_values(self) -> None:
         """Test EnableProperty flag values."""
-        import pyetwkit_core
+        from pyetwkit._core import EnableProperty
 
-        enable_prop = pyetwkit_core.EnableProperty
         # Should have common enable properties
         expected_flags = ["STACK_TRACE", "SID", "TS_ID", "PROCESS_START_KEY"]
         found_flags = []
         for flag in expected_flags:
-            if hasattr(enable_prop, flag) or hasattr(enable_prop, flag.title().replace("_", "")):
+            if hasattr(EnableProperty, flag) or hasattr(EnableProperty, flag.title().replace("_", "")):
                 found_flags.append(flag)
         # At least STACK_TRACE should exist
         assert len(found_flags) >= 1
@@ -56,28 +54,28 @@ class TestStackTraceCapture:
 
     def test_session_with_stack_trace_option(self) -> None:
         """Test creating session with stack trace enabled."""
-        import pyetwkit_core
+        from pyetwkit import _core
+        from pyetwkit._core import EtwSession
 
         # Should be able to create session with stack trace option
-        session = pyetwkit_core.EtwSession("StackTraceTest")
+        session = EtwSession("StackTraceTest")
         assert session is not None
         # Check if enable_stack_trace method or option exists
         has_stack_option = (
             hasattr(session, "enable_stack_trace")
             or hasattr(session, "with_stack_trace")
-            or hasattr(pyetwkit_core, "EnableProperty")
+            or hasattr(_core, "EnableProperty")
         )
         assert has_stack_option
 
     def test_event_has_stack_property(self) -> None:
         """Test that EtwEvent has stack trace property."""
-        import pyetwkit_core
+        from pyetwkit._core import EtwEvent
 
         # Check EtwEvent class has stack-related attribute
-        event_class = pyetwkit_core.EtwEvent
         # Should have stack_trace or stack attribute
         # This is checking the class definition, not instance
-        assert hasattr(event_class, "stack_trace") or hasattr(event_class, "stack")
+        assert hasattr(EtwEvent, "stack_trace") or hasattr(EtwEvent, "stack")
 
 
 class TestStackFrame:
@@ -85,11 +83,12 @@ class TestStackFrame:
 
     def test_stack_frame_exists(self) -> None:
         """Test that StackFrame class exists (if stack traces are supported)."""
-        import pyetwkit_core
+        from pyetwkit import _core
+        from pyetwkit._core import EtwEvent
 
         # StackFrame might be a separate class or part of event
-        has_stack_support = hasattr(pyetwkit_core, "StackFrame") or hasattr(
-            pyetwkit_core.EtwEvent, "stack_trace"
+        has_stack_support = hasattr(_core, "StackFrame") or hasattr(
+            EtwEvent, "stack_trace"
         )
         assert has_stack_support
 
@@ -98,13 +97,12 @@ class TestStackFrame:
 class TestStackTraceIntegration:
     """Integration tests for stack trace (require admin)."""
 
-    @pytest.mark.skip(reason="Requires admin privileges")
     def test_capture_events_with_stack_trace(self) -> None:
         """Test capturing events with stack trace enabled."""
-        import pyetwkit_core
+        from pyetwkit._core import EtwProvider, EtwSession
 
-        session = pyetwkit_core.EtwSession("StackTraceIntegrationTest")
-        provider = pyetwkit_core.EtwProvider(
+        session = EtwSession("StackTraceIntegrationTest")
+        provider = EtwProvider(
             "22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716",
             "Microsoft-Windows-Kernel-Process",
         )

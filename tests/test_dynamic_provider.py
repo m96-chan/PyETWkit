@@ -6,7 +6,7 @@ import pytest
 def check_extension_available() -> bool:
     """Check if native extension is available."""
     try:
-        import pyetwkit_core  # noqa: F401
+        from pyetwkit import _core  # noqa: F401
 
         return True
     except ImportError:
@@ -25,25 +25,25 @@ class TestDynamicProviderAPI:
 
     def test_session_has_add_provider_method(self) -> None:
         """Test that session has add_provider method."""
-        import pyetwkit_core
+        from pyetwkit._core import EtwSession
 
-        session = pyetwkit_core.EtwSession("DynamicTest")
+        session = EtwSession("DynamicTest")
         assert hasattr(session, "add_provider")
         assert callable(session.add_provider)
 
     def test_session_has_remove_provider_method(self) -> None:
         """Test that session has remove_provider method."""
-        import pyetwkit_core
+        from pyetwkit._core import EtwSession
 
-        session = pyetwkit_core.EtwSession("DynamicTest")
+        session = EtwSession("DynamicTest")
         assert hasattr(session, "remove_provider")
         assert callable(session.remove_provider)
 
     def test_session_has_list_providers_method(self) -> None:
         """Test that session has method to list active providers."""
-        import pyetwkit_core
+        from pyetwkit._core import EtwSession
 
-        session = pyetwkit_core.EtwSession("DynamicTest")
+        session = EtwSession("DynamicTest")
         # Could be list_providers, providers, or get_providers
         has_list = (
             hasattr(session, "list_providers")
@@ -54,10 +54,10 @@ class TestDynamicProviderAPI:
 
     def test_add_provider_before_start(self) -> None:
         """Test adding provider before session starts."""
-        import pyetwkit_core
+        from pyetwkit._core import EtwProvider, EtwSession
 
-        session = pyetwkit_core.EtwSession("DynamicTest")
-        provider = pyetwkit_core.EtwProvider(
+        session = EtwSession("DynamicTest")
+        provider = EtwProvider(
             "22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716",
             "Microsoft-Windows-Kernel-Process",
         )
@@ -66,15 +66,15 @@ class TestDynamicProviderAPI:
 
     def test_add_multiple_providers(self) -> None:
         """Test adding multiple providers."""
-        import pyetwkit_core
+        from pyetwkit._core import EtwProvider, EtwSession
 
-        session = pyetwkit_core.EtwSession("DynamicTest")
+        session = EtwSession("DynamicTest")
 
-        provider1 = pyetwkit_core.EtwProvider(
+        provider1 = EtwProvider(
             "22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716",
             "Microsoft-Windows-Kernel-Process",
         )
-        provider2 = pyetwkit_core.EtwProvider(
+        provider2 = EtwProvider(
             "edd08927-9cc4-4e65-b970-c2560fb5c289",
             "Microsoft-Windows-Kernel-File",
         )
@@ -89,10 +89,10 @@ class TestRemoveProvider:
 
     def test_remove_provider_by_guid(self) -> None:
         """Test removing provider by GUID."""
-        import pyetwkit_core
+        from pyetwkit._core import EtwProvider, EtwSession
 
-        session = pyetwkit_core.EtwSession("RemoveTest")
-        provider = pyetwkit_core.EtwProvider(
+        session = EtwSession("RemoveTest")
+        provider = EtwProvider(
             "22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716",
             "Microsoft-Windows-Kernel-Process",
         )
@@ -105,9 +105,9 @@ class TestRemoveProvider:
 
     def test_remove_nonexistent_provider(self) -> None:
         """Test removing provider that doesn't exist."""
-        import pyetwkit_core
+        from pyetwkit._core import EtwSession
 
-        session = pyetwkit_core.EtwSession("RemoveTest")
+        session = EtwSession("RemoveTest")
 
         # Should return False or raise specific error
         try:
@@ -121,13 +121,12 @@ class TestRemoveProvider:
 class TestDynamicProviderIntegration:
     """Integration tests for dynamic provider switching (require admin)."""
 
-    @pytest.mark.skip(reason="Requires admin privileges")
     def test_add_provider_while_running(self) -> None:
         """Test adding provider while session is running."""
-        import pyetwkit_core
+        from pyetwkit._core import EtwProvider, EtwSession
 
-        session = pyetwkit_core.EtwSession("DynamicIntegrationTest")
-        provider1 = pyetwkit_core.EtwProvider(
+        session = EtwSession("DynamicIntegrationTest")
+        provider1 = EtwProvider(
             "22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716",
             "Microsoft-Windows-Kernel-Process",
         )
@@ -137,7 +136,7 @@ class TestDynamicProviderIntegration:
 
         try:
             # Add second provider while running
-            provider2 = pyetwkit_core.EtwProvider(
+            provider2 = EtwProvider(
                 "edd08927-9cc4-4e65-b970-c2560fb5c289",
                 "Microsoft-Windows-Kernel-File",
             )
@@ -148,13 +147,12 @@ class TestDynamicProviderIntegration:
         finally:
             session.stop()
 
-    @pytest.mark.skip(reason="Requires admin privileges")
     def test_remove_provider_while_running(self) -> None:
         """Test removing provider while session is running."""
-        import pyetwkit_core
+        from pyetwkit._core import EtwProvider, EtwSession
 
-        session = pyetwkit_core.EtwSession("DynamicIntegrationTest")
-        provider = pyetwkit_core.EtwProvider(
+        session = EtwSession("DynamicIntegrationTest")
+        provider = EtwProvider(
             "22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716",
             "Microsoft-Windows-Kernel-Process",
         )
