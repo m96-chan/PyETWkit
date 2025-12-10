@@ -19,7 +19,8 @@ ferrisetw = "1.2"
 
 # Python bindings
 pyo3 = { version = "0.22", features = ["extension-module"] }
-pyo3-asyncio-0-21 = { version = "0.21", features = ["tokio-runtime"] }
+# Note: pyo3-asyncio not yet compatible with pyo3 0.22
+# Async support will be added via Python-side asyncio wrapper
 
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
