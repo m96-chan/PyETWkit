@@ -2,9 +2,20 @@
 
 import pytest
 
+
+def check_extension_available() -> bool:
+    """Check if native extension is available."""
+    try:
+        from pyetwkit._core import EtwSession  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
 # Skip all tests if native extension is not available
 pytestmark = pytest.mark.skipif(
-    True,  # Will be replaced with actual import check
+    not check_extension_available(),
     reason="Native extension not built",
 )
 

@@ -14,6 +14,7 @@ pub mod event;
 pub mod filter;
 pub mod kernel;
 pub mod provider;
+pub mod schema;
 pub mod session;
 pub mod stats;
 
@@ -68,6 +69,11 @@ fn pyetwkit_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Register EnableProperty enum
     m.add_class::<provider::PyEnableProperty>()?;
+
+    // Register schema classes
+    m.add_class::<schema::PyEventSchema>()?;
+    m.add_class::<schema::PyPropertyInfo>()?;
+    m.add_class::<schema::PySchemaCache>()?;
 
     // Register submodules
     let raw_module = PyModule::new_bound(m.py(), "raw")?;

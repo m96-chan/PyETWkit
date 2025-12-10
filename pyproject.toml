@@ -60,6 +60,7 @@ module-name = "pyetwkit._core"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
 asyncio_mode = "auto"
 markers = [
     "admin: marks tests as requiring administrator privileges",

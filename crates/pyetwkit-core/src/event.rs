@@ -351,6 +351,52 @@ impl PyEtwEvent {
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
     }
 
+    /// Convert event to dictionary
+    fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        let dict = PyDict::new_bound(py);
+        dict.set_item("provider_id", self.inner.provider_id.to_string())?;
+        dict.set_item("provider_name", self.inner.provider_name.clone())?;
+        dict.set_item("event_id", self.inner.event_id)?;
+        dict.set_item("version", self.inner.version)?;
+        dict.set_item("opcode", self.inner.opcode)?;
+        dict.set_item("level", self.inner.level)?;
+        dict.set_item("keywords", self.inner.keywords)?;
+        dict.set_item("process_id", self.inner.process_id)?;
+        dict.set_item("thread_id", self.inner.thread_id)?;
+        dict.set_item("timestamp", self.inner.timestamp.to_rfc3339())?;
+        dict.set_item(
+            "activity_id",
+            self.inner.activity_id.map(|id| id.to_string()),
+        )?;
+        dict.set_item("task", self.inner.task)?;
+        dict.set_item("channel", self.inner.channel)?;
+
+        // Add properties as nested dict
+        let props_dict = PyDict::new_bound(py);
+        for (key, value) in &self.inner.properties {
+            props_dict.set_item(key, event_value_to_py(py, value)?)?;
+        }
+        dict.set_item("properties", props_dict)?;
+
+        Ok(dict.into())
+    }
+
+    /// Schema type (manifest, mof, tracelogging, unknown)
+    #[getter]
+    fn schema_type(&self) -> &str {
+        // Determine from provider info or default to unknown
+        // In a real implementation, this would come from the schema locator
+        "unknown"
+    }
+
+    /// Check if this is a TraceLogging event
+    #[getter]
+    fn is_tracelogging(&self) -> bool {
+        // TraceLogging events have specific characteristics
+        // For now, return false - this would be set during parsing
+        false
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "EtwEvent(provider={}, event_id={}, pid={}, timestamp={})",
