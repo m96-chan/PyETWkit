@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Session statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,7 +228,7 @@ impl PySessionStats {
 
     /// Convert to dictionary
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let dict = pyo3::types::PyDict::new(py);
+        let dict = pyo3::types::PyDict::new_bound(py);
         dict.set_item("events_received", self.inner.events_received)?;
         dict.set_item("events_processed", self.inner.events_processed)?;
         dict.set_item("events_lost", self.inner.events_lost)?;

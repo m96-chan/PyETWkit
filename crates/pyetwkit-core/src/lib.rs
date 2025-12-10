@@ -40,7 +40,7 @@ fn pyetwkit_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<kernel::PyKernelFlags>()?;
 
     // Register submodules
-    let raw_module = PyModule::new(m.py(), "raw")?;
+    let raw_module = PyModule::new_bound(m.py(), "raw")?;
     session::register_raw_api(&raw_module)?;
     m.add_submodule(&raw_module)?;
 

@@ -12,7 +12,7 @@ use crate::stats::{SharedStatsTracker, StatsTracker};
 
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
 use ferrisetw::schema_locator::SchemaLocator;
-use ferrisetw::trace::{stop_trace_by_name, KernelTrace, TraceTrait};
+use ferrisetw::trace::{stop_trace_by_name, KernelTrace};
 use ferrisetw::EventRecord;
 use parking_lot::RwLock;
 use pyo3::prelude::*;
@@ -199,11 +199,10 @@ impl KernelSession {
         let callback = move |record: &EventRecord, schema_locator: &SchemaLocator| {
             stats.record_event_received();
 
-            // Parse event
-            let event = crate::session::parse_event_record(
-                record,
-                schema_locator.event_schema(record).as_ref(),
-            );
+            // Parse event (ferrisetw 1.2: event_schema returns Result)
+            let schema = schema_locator.event_schema(record).ok();
+            let event =
+                crate::session::parse_event_record(record, schema.as_ref().map(|s| s.as_ref()));
 
             // Send to channel
             match event_tx.try_send(event) {
@@ -217,19 +216,19 @@ impl KernelSession {
             }
         };
 
-        // Build trace with kernel provider
-        let trace = trace_builder
-            .enable(
-                ferrisetw::provider::kernel::KernelProvider::new()
-                    .add_callback(callback)
-                    .build(),
+        // Build trace with kernel provider (ferrisetw 1.2: use Provider::kernel with pre-defined providers)
+        // Use PROCESS_PROVIDER for process events
+        let trace_builder = trace_builder.enable(
+            ferrisetw::provider::Provider::kernel(
+                &ferrisetw::provider::kernel_providers::PROCESS_PROVIDER,
             )
-            .build()
-            .map_err(|e| EtwError::StartTraceFailed(format!("{:?}", e)))?;
+            .add_callback(callback)
+            .build(),
+        );
 
-        // Spawn processing thread
+        // Spawn processing thread - ferrisetw 1.2 API: use start_and_process() on builder
         let trace_thread = thread::spawn(move || {
-            let _ = trace.start_and_process();
+            let _ = trace_builder.start_and_process();
             *state_clone.write() = KernelSessionState::Stopped;
         });
 

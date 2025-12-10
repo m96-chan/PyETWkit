@@ -2,9 +2,10 @@
 
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Event filter types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub enum EventFilter {
     /// Filter by specific event IDs
     EventIds(Vec<u16>),
@@ -16,9 +17,35 @@ pub enum EventFilter {
     ProcessName(String),
     /// Exclude specific event IDs
     ExcludeEventIds(Vec<u16>),
-    /// Custom predicate (not serializable)
+    /// Custom predicate (not serializable, uses Arc for Clone)
     #[serde(skip)]
-    Custom(Box<dyn Fn(u16, u8) -> bool + Send + Sync>),
+    Custom(Arc<dyn Fn(u16, u8) -> bool + Send + Sync>),
+}
+
+impl Clone for EventFilter {
+    fn clone(&self) -> Self {
+        match self {
+            Self::EventIds(v) => Self::EventIds(v.clone()),
+            Self::Opcodes(v) => Self::Opcodes(v.clone()),
+            Self::ProcessId(v) => Self::ProcessId(*v),
+            Self::ProcessName(v) => Self::ProcessName(v.clone()),
+            Self::ExcludeEventIds(v) => Self::ExcludeEventIds(v.clone()),
+            Self::Custom(f) => Self::Custom(Arc::clone(f)),
+        }
+    }
+}
+
+impl std::fmt::Debug for EventFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EventIds(v) => f.debug_tuple("EventIds").field(v).finish(),
+            Self::Opcodes(v) => f.debug_tuple("Opcodes").field(v).finish(),
+            Self::ProcessId(v) => f.debug_tuple("ProcessId").field(v).finish(),
+            Self::ProcessName(v) => f.debug_tuple("ProcessName").field(v).finish(),
+            Self::ExcludeEventIds(v) => f.debug_tuple("ExcludeEventIds").field(v).finish(),
+            Self::Custom(_) => f.debug_tuple("Custom").field(&"<fn>").finish(),
+        }
+    }
 }
 
 impl EventFilter {
