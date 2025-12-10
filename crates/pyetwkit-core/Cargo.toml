@@ -1,0 +1,56 @@
+[package]
+name = "pyetwkit-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["m96-chan"]
+description = "High-performance ETW (Event Tracing for Windows) consumer library with Python bindings"
+license = "MIT"
+repository = "https://github.com/m96-chan/PyETWkit"
+keywords = ["etw", "windows", "tracing", "events", "pyo3"]
+categories = ["os::windows-apis", "development-tools::profiling"]
+
+[lib]
+name = "pyetwkit_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# ETW backend - KrabsETW Rust port
+ferrisetw = "1.2"
+
+# Python bindings
+pyo3 = { version = "0.22", features = ["extension-module"] }
+# Note: pyo3-asyncio not yet compatible with pyo3 0.22
+# Async support will be added via Python-side asyncio wrapper
+
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# GUID handling
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# Thread-safe primitives
+parking_lot = "0.12"
+crossbeam-channel = "0.5"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = []
+# Enable additional logging for debugging
+debug-logging = []
