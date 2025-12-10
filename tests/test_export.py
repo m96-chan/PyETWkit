@@ -1,6 +1,5 @@
 """Tests for data export functionality (v0.3.0 - #14, #33)."""
 
-import json
 import os
 import tempfile
 

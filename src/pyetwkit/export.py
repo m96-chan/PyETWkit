@@ -11,11 +11,9 @@ This module provides functions to export ETW events to various formats:
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterator, Sequence
-
-if TYPE_CHECKING:
-    pass
+from typing import Any
 
 # Type alias for events
 EventLike = Any  # EtwEvent or dict
@@ -45,7 +43,7 @@ def _flatten_event(event_dict: dict[str, Any]) -> dict[str, Any]:
 def to_dataframe(
     events: Sequence[EventLike],
     flatten: bool = True,
-) -> "Any":
+) -> Any:
     """Convert events to a Pandas DataFrame.
 
     Args:
@@ -173,13 +171,6 @@ def to_parquet(
         >>> to_parquet(events, "events.parquet")
     """
     try:
-        import pandas as pd
-    except ImportError as e:
-        raise ImportError(
-            "pandas is required for Parquet export. " "Install it with: pip install pandas"
-        ) from e
-
-    try:
         import pyarrow  # noqa: F401
     except ImportError as e:
         raise ImportError(
@@ -193,7 +184,7 @@ def to_parquet(
 def to_arrow(
     events: Sequence[EventLike],
     flatten: bool = True,
-) -> "Any":
+) -> Any:
     """Convert events to Apache Arrow Table format.
 
     Args:

@@ -64,7 +64,7 @@ class TestTraceLoggingProvider:
         # This was added in discovery module
         providers = pyetwkit_core.list_providers()
         # Some providers should have different sources
-        sources = set(p.source for p in providers[:100])
+        sources = {p.source for p in providers[:100]}
         # At minimum we should have xml or mof
         assert len(sources) >= 1
 
