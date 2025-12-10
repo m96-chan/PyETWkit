@@ -458,6 +458,37 @@ impl PyEtwSession {
         Ok(())
     }
 
+    /// Remove a provider by GUID string
+    fn remove_provider(&mut self, guid: &str) -> PyResult<bool> {
+        let session = self
+            .inner
+            .as_mut()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session is closed"))?;
+
+        let target_guid = Uuid::parse_str(guid)
+            .map_err(|_| pyo3::exceptions::PyValueError::new_err("Invalid GUID format"))?;
+
+        // Remove from internal provider list
+        let original_len = session.providers.len();
+        session.providers.retain(|p| p.guid != target_guid);
+
+        Ok(session.providers.len() < original_len)
+    }
+
+    /// List all providers in this session
+    fn list_providers(&self) -> PyResult<Vec<String>> {
+        let session = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session is closed"))?;
+
+        Ok(session
+            .providers
+            .iter()
+            .map(|p| p.guid.to_string())
+            .collect())
+    }
+
     /// Start the session
     fn start(&mut self) -> PyResult<()> {
         let session = self
