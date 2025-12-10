@@ -25,10 +25,10 @@ For async usage:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 __version__ = "0.1.0"
 __author__ = "m96-chan"
-
-from typing import TYPE_CHECKING
 
 # Import core types from Rust extension
 try:
@@ -56,14 +56,14 @@ except ImportError:
 
 # Import high-level Python APIs
 from pyetwkit.listener import EtwListener
-from pyetwkit.streamer import EtwStreamer
 from pyetwkit.providers import (
-    KernelProvider,
-    ProcessProvider,
-    NetworkProvider,
     FileProvider,
+    KernelProvider,
+    NetworkProvider,
+    ProcessProvider,
     RegistryProvider,
 )
+from pyetwkit.streamer import EtwStreamer
 
 __all__ = [
     # Version info
@@ -107,6 +107,7 @@ def check_admin() -> bool:
         True if running with admin privileges, False otherwise.
     """
     import ctypes
+
     try:
         return ctypes.windll.shell32.IsUserAnAdmin() != 0
     except Exception:

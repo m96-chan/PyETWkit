@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Iterator, Sequence
 
 if TYPE_CHECKING:
-    from pyetwkit._core import EtwEvent, EtwProvider, EtwSession, SessionStats
+    from pyetwkit._core import EtwEvent, EtwProvider, SessionStats
 
 
 class EtwListener:
@@ -167,7 +167,9 @@ class EtwListener:
         self.start()
         return self
 
-    def __exit__(self, exc_type: type | None, exc_val: BaseException | None, exc_tb: object) -> bool:
+    def __exit__(
+        self, exc_type: type | None, exc_val: BaseException | None, exc_tb: object
+    ) -> bool:
         """Context manager exit - stops the listener."""
         if self._started:
             self.stop()

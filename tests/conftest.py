@@ -1,7 +1,6 @@
 """Pytest configuration and fixtures."""
 
 import ctypes
-import sys
 
 import pytest
 
