@@ -81,6 +81,18 @@ pub enum EtwError {
     /// Internal error
     #[error("Internal error: {0}")]
     Internal(String),
+
+    /// TDH API error
+    #[error("TDH API error: {0}")]
+    TdhError(String),
+
+    /// File not found
+    #[error("File not found: {0}")]
+    FileNotFound(String),
+
+    /// Invalid file format
+    #[error("Invalid file format: {0}")]
+    InvalidFileFormat(String),
 }
 
 impl From<EtwError> for PyErr {
@@ -92,6 +104,9 @@ impl From<EtwError> for PyErr {
             }
             EtwError::WindowsError(_, code) => {
                 PyOSError::new_err(format!("{} (error code: {})", err, code))
+            }
+            EtwError::FileNotFound(_) => {
+                pyo3::exceptions::PyFileNotFoundError::new_err(err.to_string())
             }
             _ => PyRuntimeError::new_err(err.to_string()),
         }

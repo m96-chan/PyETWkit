@@ -47,6 +47,13 @@ crossbeam-channel = "0.5"
 # Time handling
 chrono = { version = "0.4", features = ["serde"] }
 
+# Windows APIs for TDH (Trace Data Helper)
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.57", features = [
+    "Win32_System_Diagnostics_Etw",
+    "Win32_Foundation",
+] }
+
 [dev-dependencies]
 tempfile = "3"
 

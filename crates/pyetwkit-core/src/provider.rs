@@ -149,6 +149,67 @@ impl EtwProvider {
     }
 }
 
+/// Enable properties for tracing (e.g., stack traces)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnableProperty {
+    /// Enable stack trace capture
+    StackTrace,
+    /// Enable SID (Security Identifier) capture
+    Sid,
+    /// Enable terminal session ID
+    TsId,
+    /// Enable process start key
+    ProcessStartKey,
+}
+
+impl EnableProperty {
+    /// Get the Windows constant value
+    pub fn value(&self) -> u32 {
+        match self {
+            EnableProperty::StackTrace => 0x00000001, // EVENT_ENABLE_PROPERTY_STACK_TRACE
+            EnableProperty::Sid => 0x00000002,        // EVENT_ENABLE_PROPERTY_SID
+            EnableProperty::TsId => 0x00000004,       // EVENT_ENABLE_PROPERTY_TS_ID
+            EnableProperty::ProcessStartKey => 0x00000008, // EVENT_ENABLE_PROPERTY_PROCESS_START_KEY
+        }
+    }
+}
+
+/// Python wrapper for EnableProperty
+#[pyclass(name = "EnableProperty")]
+#[derive(Clone)]
+pub struct PyEnableProperty;
+
+#[pymethods]
+impl PyEnableProperty {
+    /// Stack trace capture flag
+    #[classattr]
+    #[pyo3(name = "STACK_TRACE")]
+    fn stack_trace() -> u32 {
+        EnableProperty::StackTrace.value()
+    }
+
+    /// SID capture flag
+    #[classattr]
+    #[pyo3(name = "SID")]
+    fn sid() -> u32 {
+        EnableProperty::Sid.value()
+    }
+
+    /// Terminal session ID capture flag
+    #[classattr]
+    #[pyo3(name = "TS_ID")]
+    fn ts_id() -> u32 {
+        EnableProperty::TsId.value()
+    }
+
+    /// Process start key capture flag
+    #[classattr]
+    #[pyo3(name = "PROCESS_START_KEY")]
+    fn process_start_key() -> u32 {
+        EnableProperty::ProcessStartKey.value()
+    }
+}
+
 /// Well-known provider GUIDs
 pub mod known_providers {
     use uuid::Uuid;
