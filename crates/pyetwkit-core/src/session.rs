@@ -12,7 +12,7 @@ use ferrisetw::parser::Parser;
 use ferrisetw::provider::Provider;
 use ferrisetw::schema::Schema;
 use ferrisetw::schema_locator::SchemaLocator;
-use ferrisetw::trace::{stop_trace_by_name, UserTrace};
+use ferrisetw::trace::{stop_trace_by_name, TraceTrait, UserTrace};
 use ferrisetw::EventRecord;
 use parking_lot::RwLock;
 use pyo3::prelude::*;
@@ -89,6 +89,7 @@ pub enum SessionState {
 
 /// Internal session handle
 struct SessionHandle {
+    trace: Option<UserTrace>,
     trace_thread: Option<JoinHandle<()>>,
     stop_flag: Arc<AtomicBool>,
 }
@@ -231,15 +232,21 @@ impl EtwSession {
             trace_builder = trace_builder.enable(built_provider);
         }
 
-        // Start trace and spawn processing thread
-        // ferrisetw 1.2 API: use start_and_process() directly on builder
+        // Start trace using start() to get the trace object and handle
+        // ferrisetw 1.2 API: start() returns (UserTrace, TraceHandle)
+        let (user_trace, trace_handle) = trace_builder
+            .start()
+            .map_err(|e| EtwError::StartTraceFailed(format!("{:?}", e)))?;
+
+        // Spawn thread to process events using the handle
         let trace_thread = thread::spawn(move || {
-            let _ = trace_builder.start_and_process();
+            let _ = UserTrace::process_from_handle(trace_handle);
             *state_clone.write() = SessionState::Stopped;
         });
 
         *self.state.write() = SessionState::Running;
         self.handle = Some(SessionHandle {
+            trace: Some(user_trace),
             trace_thread: Some(trace_thread),
             stop_flag: stop_flag_clone,
         });
@@ -254,23 +261,27 @@ impl EtwSession {
             return Err(EtwError::SessionNotRunning);
         }
 
-        // Stop the trace
-        stop_trace_by_name(&self.config.name)
-            .map_err(|e| EtwError::StopTraceFailed(format!("{:?}", e)))?;
-
         // Set stop flag
         if let Some(ref handle) = self.handle {
             handle.stop_flag.store(true, Ordering::SeqCst);
         }
 
-        *self.state.write() = SessionState::Stopped;
-
-        // Wait for thread to finish
+        // Stop the trace by taking and dropping the UserTrace object
+        // This calls UserTrace::stop() via Drop trait
         if let Some(mut handle) = self.handle.take() {
+            // Take the trace to stop it (Drop will call stop)
+            if let Some(trace) = handle.trace.take() {
+                // Explicitly stop the trace
+                let _ = trace.stop();
+            }
+
+            // Wait for processing thread to finish
             if let Some(thread) = handle.trace_thread.take() {
                 let _ = thread.join();
             }
         }
+
+        *self.state.write() = SessionState::Stopped;
 
         Ok(())
     }
