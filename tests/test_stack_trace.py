@@ -43,7 +43,9 @@ class TestEnableProperty:
         expected_flags = ["STACK_TRACE", "SID", "TS_ID", "PROCESS_START_KEY"]
         found_flags = []
         for flag in expected_flags:
-            if hasattr(EnableProperty, flag) or hasattr(EnableProperty, flag.title().replace("_", "")):
+            if hasattr(EnableProperty, flag) or hasattr(
+                EnableProperty, flag.title().replace("_", "")
+            ):
                 found_flags.append(flag)
         # At least STACK_TRACE should exist
         assert len(found_flags) >= 1
@@ -87,9 +89,7 @@ class TestStackFrame:
         from pyetwkit._core import EtwEvent
 
         # StackFrame might be a separate class or part of event
-        has_stack_support = hasattr(_core, "StackFrame") or hasattr(
-            EtwEvent, "stack_trace"
-        )
+        has_stack_support = hasattr(_core, "StackFrame") or hasattr(EtwEvent, "stack_trace")
         assert has_stack_support
 
 
