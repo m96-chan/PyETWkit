@@ -11,8 +11,8 @@ use crate::event::EtwEvent;
 use crate::stats::{SharedStatsTracker, StatsTracker};
 
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
-use ferrisetw::trace::{KernelTrace, TraceTrait, stop_trace_by_name};
 use ferrisetw::schema_locator::SchemaLocator;
+use ferrisetw::trace::{stop_trace_by_name, KernelTrace, TraceTrait};
 use ferrisetw::EventRecord;
 use parking_lot::RwLock;
 use pyo3::prelude::*;
@@ -71,7 +71,9 @@ impl KernelEventCategory {
 
     /// Combine multiple categories
     pub fn combine(categories: &[KernelEventCategory]) -> u32 {
-        categories.iter().fold(0u32, |acc, cat| acc | cat.to_flags())
+        categories
+            .iter()
+            .fold(0u32, |acc, cat| acc | cat.to_flags())
     }
 }
 
@@ -180,7 +182,10 @@ impl KernelSession {
             let _ = stop_trace_by_name(&self.config.name);
         }
 
-        let event_tx = self.event_tx.clone().ok_or(EtwError::Internal("No event channel".into()))?;
+        let event_tx = self
+            .event_tx
+            .clone()
+            .ok_or(EtwError::Internal("No event channel".into()))?;
         let stats = self.stats.clone();
         let state_clone = self.state.clone();
         let stop_flag = Arc::new(AtomicBool::new(false));
@@ -195,7 +200,10 @@ impl KernelSession {
             stats.record_event_received();
 
             // Parse event
-            let event = crate::session::parse_event_record(record, schema_locator.event_schema(record).as_ref());
+            let event = crate::session::parse_event_record(
+                record,
+                schema_locator.event_schema(record).as_ref(),
+            );
 
             // Send to channel
             match event_tx.try_send(event) {
@@ -214,7 +222,7 @@ impl KernelSession {
             .enable(
                 ferrisetw::provider::kernel::KernelProvider::new()
                     .add_callback(callback)
-                    .build()
+                    .build(),
             )
             .build()
             .map_err(|e| EtwError::StartTraceFailed(format!("{:?}", e)))?;
@@ -385,7 +393,9 @@ impl PyKernelSession {
 
     /// Start the session
     fn start(&mut self) -> PyResult<()> {
-        let session = self.inner.as_mut()
+        let session = self
+            .inner
+            .as_mut()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session is closed"))?;
         session.start()?;
         Ok(())
@@ -393,7 +403,9 @@ impl PyKernelSession {
 
     /// Stop the session
     fn stop(&mut self) -> PyResult<()> {
-        let session = self.inner.as_mut()
+        let session = self
+            .inner
+            .as_mut()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session is closed"))?;
         session.stop()?;
         Ok(())
@@ -401,14 +413,18 @@ impl PyKernelSession {
 
     /// Get the next event (blocking)
     fn next_event(&self) -> PyResult<Option<crate::event::PyEtwEvent>> {
-        let session = self.inner.as_ref()
+        let session = self
+            .inner
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session is closed"))?;
         Ok(session.next_event().map(crate::event::PyEtwEvent::from))
     }
 
     /// Get the next event with timeout (in milliseconds)
     fn next_event_timeout(&self, timeout_ms: u64) -> PyResult<Option<crate::event::PyEtwEvent>> {
-        let session = self.inner.as_ref()
+        let session = self
+            .inner
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session is closed"))?;
         Ok(session
             .next_event_timeout(Duration::from_millis(timeout_ms))
@@ -417,7 +433,9 @@ impl PyKernelSession {
 
     /// Get session statistics
     fn stats(&self) -> PyResult<crate::stats::PySessionStats> {
-        let session = self.inner.as_ref()
+        let session = self
+            .inner
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session is closed"))?;
         Ok(crate::stats::PySessionStats::from(session.stats()))
     }
@@ -429,10 +447,7 @@ impl PyKernelSession {
 
     fn __repr__(&self) -> String {
         match &self.inner {
-            Some(session) => format!(
-                "KernelSession(running={})",
-                session.is_running()
-            ),
+            Some(session) => format!("KernelSession(running={})", session.is_running()),
             None => "KernelSession(closed)".to_string(),
         }
     }

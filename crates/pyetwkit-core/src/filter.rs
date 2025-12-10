@@ -60,13 +60,15 @@ impl FilterBuilder {
 
     /// Filter by specific event IDs
     pub fn event_ids(mut self, ids: impl IntoIterator<Item = u16>) -> Self {
-        self.filters.push(EventFilter::EventIds(ids.into_iter().collect()));
+        self.filters
+            .push(EventFilter::EventIds(ids.into_iter().collect()));
         self
     }
 
     /// Filter by opcodes
     pub fn opcodes(mut self, opcodes: impl IntoIterator<Item = u8>) -> Self {
-        self.filters.push(EventFilter::Opcodes(opcodes.into_iter().collect()));
+        self.filters
+            .push(EventFilter::Opcodes(opcodes.into_iter().collect()));
         self
     }
 
@@ -84,7 +86,8 @@ impl FilterBuilder {
 
     /// Exclude specific event IDs
     pub fn exclude_event_ids(mut self, ids: impl IntoIterator<Item = u16>) -> Self {
-        self.filters.push(EventFilter::ExcludeEventIds(ids.into_iter().collect()));
+        self.filters
+            .push(EventFilter::ExcludeEventIds(ids.into_iter().collect()));
         self
     }
 
@@ -94,7 +97,13 @@ impl FilterBuilder {
     }
 
     /// Check if all filters match
-    pub fn matches_all(&self, event_id: u16, opcode: u8, pid: u32, process_name: Option<&str>) -> bool {
+    pub fn matches_all(
+        &self,
+        event_id: u16,
+        opcode: u8,
+        pid: u32,
+        process_name: Option<&str>,
+    ) -> bool {
         for filter in &self.filters {
             if !filter.matches(event_id, opcode) {
                 return false;
@@ -119,7 +128,9 @@ impl PyEventFilter {
     /// Create a new empty filter
     #[new]
     fn new() -> Self {
-        Self { filters: Vec::new() }
+        Self {
+            filters: Vec::new(),
+        }
     }
 
     /// Filter by specific event IDs
@@ -219,9 +230,7 @@ mod tests {
 
     #[test]
     fn test_filter_builder_matches() {
-        let builder = FilterBuilder::new()
-            .event_ids([1, 2, 3])
-            .process_id(1000);
+        let builder = FilterBuilder::new().event_ids([1, 2, 3]).process_id(1000);
 
         assert!(builder.matches_all(1, 0, 1000, None));
         assert!(!builder.matches_all(4, 0, 1000, None)); // Wrong event ID

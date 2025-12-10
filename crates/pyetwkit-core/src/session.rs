@@ -12,9 +12,7 @@ use ferrisetw::parser::Parser;
 use ferrisetw::provider::Provider;
 use ferrisetw::schema::Schema;
 use ferrisetw::schema_locator::SchemaLocator;
-use ferrisetw::trace::{
-    stop_trace_by_name, TraceTrait, UserTrace,
-};
+use ferrisetw::trace::{stop_trace_by_name, TraceTrait, UserTrace};
 use ferrisetw::EventRecord;
 use parking_lot::RwLock;
 use pyo3::prelude::*;
@@ -66,7 +64,10 @@ pub struct SessionConfig {
 impl Default for SessionConfig {
     fn default() -> Self {
         Self {
-            name: format!("PyETWkit-{}", Uuid::new_v4().to_string().split('-').next().unwrap()),
+            name: format!(
+                "PyETWkit-{}",
+                Uuid::new_v4().to_string().split('-').next().unwrap()
+            ),
             mode: TraceMode::RealTime,
             buffer_size_kb: 64,
             min_buffers: 64,
@@ -147,10 +148,12 @@ impl EtwSession {
         }
 
         // Build providers
-        let mut trace_builder = UserTrace::new()
-            .named(self.config.name.clone());
+        let mut trace_builder = UserTrace::new().named(self.config.name.clone());
 
-        let event_tx = self.event_tx.clone().ok_or(EtwError::Internal("No event channel".into()))?;
+        let event_tx = self
+            .event_tx
+            .clone()
+            .ok_or(EtwError::Internal("No event channel".into()))?;
         let stats = self.stats.clone();
         let state_clone = self.state.clone();
         let stop_flag = Arc::new(AtomicBool::new(false));
@@ -182,12 +185,13 @@ impl EtwSession {
 
         // Add providers to trace
         for provider in &self.providers {
-            let mut prov_builder = Provider::by_guid(provider.guid)
-                .add_callback(callback.clone());
+            let mut prov_builder = Provider::by_guid(provider.guid).add_callback(callback.clone());
 
             // Set trace level
             prov_builder = match provider.level {
-                TraceLevel::Always => prov_builder.trace_flags(ferrisetw::provider::TraceFlags::empty()),
+                TraceLevel::Always => {
+                    prov_builder.trace_flags(ferrisetw::provider::TraceFlags::empty())
+                }
                 TraceLevel::Critical => prov_builder.level(ferrisetw::provider::FlagLevel::new(1)),
                 TraceLevel::Error => prov_builder.level(ferrisetw::provider::FlagLevel::new(2)),
                 TraceLevel::Warning => prov_builder.level(ferrisetw::provider::FlagLevel::new(3)),
@@ -208,15 +212,13 @@ impl EtwSession {
                 match filter {
                     EventFilter::EventIds(ids) => {
                         for &id in ids {
-                            prov_builder = prov_builder.add_filter(
-                                ferrisetw::provider::EventFilter::ByEventIds(vec![id])
-                            );
+                            prov_builder = prov_builder
+                                .add_filter(ferrisetw::provider::EventFilter::ByEventIds(vec![id]));
                         }
                     }
                     EventFilter::ProcessId(pid) => {
-                        prov_builder = prov_builder.add_filter(
-                            ferrisetw::provider::EventFilter::ByPids(vec![*pid])
-                        );
+                        prov_builder = prov_builder
+                            .add_filter(ferrisetw::provider::EventFilter::ByPids(vec![*pid]));
                     }
                     _ => {}
                 }
@@ -227,7 +229,8 @@ impl EtwSession {
         }
 
         // Build and start trace
-        let trace = trace_builder.build()
+        let trace = trace_builder
+            .build()
             .map_err(|e| EtwError::StartTraceFailed(format!("{:?}", e)))?;
 
         // Spawn processing thread
@@ -333,7 +336,10 @@ pub fn parse_event_record(record: &EventRecord, schema: Option<&Schema>) -> EtwE
     let unix_100ns = timestamp_100ns - 116444736000000000i64;
     let secs = unix_100ns / 10_000_000;
     let nanos = ((unix_100ns % 10_000_000) * 100) as u32;
-    event.timestamp = Utc.timestamp_opt(secs, nanos).single().unwrap_or_else(Utc::now);
+    event.timestamp = Utc
+        .timestamp_opt(secs, nanos)
+        .single()
+        .unwrap_or_else(Utc::now);
 
     // Parse activity IDs
     if let Some(activity) = header.activity_id() {
@@ -403,7 +409,9 @@ impl PyEtwSession {
             Some(n) => EtwSession::new(n),
             None => EtwSession::with_config(SessionConfig::default()),
         };
-        Self { inner: Some(session) }
+        Self {
+            inner: Some(session),
+        }
     }
 
     /// Create a session with custom configuration
@@ -432,7 +440,9 @@ impl PyEtwSession {
 
     /// Add a provider
     fn add_provider(&mut self, provider: PyEtwProvider) -> PyResult<()> {
-        let session = self.inner.as_mut()
+        let session = self
+            .inner
+            .as_mut()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session is closed"))?;
         session.add_provider(provider.inner.clone());
         Ok(())
@@ -440,7 +450,9 @@ impl PyEtwSession {
 
     /// Start the session
     fn start(&mut self) -> PyResult<()> {
-        let session = self.inner.as_mut()
+        let session = self
+            .inner
+            .as_mut()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session is closed"))?;
         session.start()?;
         Ok(())
@@ -448,7 +460,9 @@ impl PyEtwSession {
 
     /// Stop the session
     fn stop(&mut self) -> PyResult<()> {
-        let session = self.inner.as_mut()
+        let session = self
+            .inner
+            .as_mut()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session is closed"))?;
         session.stop()?;
         Ok(())
@@ -456,14 +470,18 @@ impl PyEtwSession {
 
     /// Get the next event (blocking)
     fn next_event(&self) -> PyResult<Option<PyEtwEvent>> {
-        let session = self.inner.as_ref()
+        let session = self
+            .inner
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session is closed"))?;
         Ok(session.next_event().map(PyEtwEvent::from))
     }
 
     /// Get the next event with timeout (in milliseconds)
     fn next_event_timeout(&self, timeout_ms: u64) -> PyResult<Option<PyEtwEvent>> {
-        let session = self.inner.as_ref()
+        let session = self
+            .inner
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session is closed"))?;
         Ok(session
             .next_event_timeout(Duration::from_millis(timeout_ms))
@@ -472,14 +490,18 @@ impl PyEtwSession {
 
     /// Try to get the next event (non-blocking)
     fn try_next_event(&self) -> PyResult<Option<PyEtwEvent>> {
-        let session = self.inner.as_ref()
+        let session = self
+            .inner
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session is closed"))?;
         Ok(session.try_next_event().map(PyEtwEvent::from))
     }
 
     /// Get session statistics
     fn stats(&self) -> PyResult<PySessionStats> {
-        let session = self.inner.as_ref()
+        let session = self
+            .inner
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Session is closed"))?;
         Ok(PySessionStats::from(session.stats()))
     }

@@ -332,7 +332,9 @@ impl PyEtwEvent {
     #[getter]
     fn stack_trace(&self, py: Python<'_>) -> Option<Py<PyList>> {
         self.inner.stack_trace.as_ref().map(|trace| {
-            PyList::new(py, trace.iter().map(|&addr| addr)).unwrap().into()
+            PyList::new(py, trace.iter().map(|&addr| addr))
+                .unwrap()
+                .into()
         })
     }
 

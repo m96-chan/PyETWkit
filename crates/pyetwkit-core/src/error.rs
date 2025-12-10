@@ -87,8 +87,9 @@ impl From<EtwError> for PyErr {
     fn from(err: EtwError) -> PyErr {
         match &err {
             EtwError::PermissionDenied => PyOSError::new_err(err.to_string()),
-            EtwError::InvalidProviderGuid(_)
-            | EtwError::InvalidConfig(_) => PyValueError::new_err(err.to_string()),
+            EtwError::InvalidProviderGuid(_) | EtwError::InvalidConfig(_) => {
+                PyValueError::new_err(err.to_string())
+            }
             EtwError::WindowsError(_, code) => {
                 PyOSError::new_err(format!("{} (error code: {})", err, code))
             }

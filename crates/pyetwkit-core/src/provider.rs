@@ -154,36 +154,28 @@ pub mod known_providers {
     use uuid::Uuid;
 
     /// Microsoft-Windows-Kernel-Process
-    pub const KERNEL_PROCESS: Uuid =
-        Uuid::from_u128(0x22fb2cd6_0e7b_422b_a0c7_2fad1fd0e716);
+    pub const KERNEL_PROCESS: Uuid = Uuid::from_u128(0x22fb2cd6_0e7b_422b_a0c7_2fad1fd0e716);
 
     /// Microsoft-Windows-Kernel-File
-    pub const KERNEL_FILE: Uuid =
-        Uuid::from_u128(0xedd08927_9cc4_4e65_b970_c2560fb5c289);
+    pub const KERNEL_FILE: Uuid = Uuid::from_u128(0xedd08927_9cc4_4e65_b970_c2560fb5c289);
 
     /// Microsoft-Windows-Kernel-Network
-    pub const KERNEL_NETWORK: Uuid =
-        Uuid::from_u128(0x7dd42a49_5329_4832_8dfd_43d979153a88);
+    pub const KERNEL_NETWORK: Uuid = Uuid::from_u128(0x7dd42a49_5329_4832_8dfd_43d979153a88);
 
     /// Microsoft-Windows-Kernel-Registry
-    pub const KERNEL_REGISTRY: Uuid =
-        Uuid::from_u128(0x70eb4f03_c1de_4f73_a051_33d13d5413bd);
+    pub const KERNEL_REGISTRY: Uuid = Uuid::from_u128(0x70eb4f03_c1de_4f73_a051_33d13d5413bd);
 
     /// Microsoft-Windows-DNS-Client
-    pub const DNS_CLIENT: Uuid =
-        Uuid::from_u128(0x1c95126e_7eea_49a9_a3fe_a378b03ddb4d);
+    pub const DNS_CLIENT: Uuid = Uuid::from_u128(0x1c95126e_7eea_49a9_a3fe_a378b03ddb4d);
 
     /// Microsoft-Windows-TCPIP
-    pub const TCPIP: Uuid =
-        Uuid::from_u128(0x2f07e2ee_15db_40f1_90ef_9d7ba282188a);
+    pub const TCPIP: Uuid = Uuid::from_u128(0x2f07e2ee_15db_40f1_90ef_9d7ba282188a);
 
     /// Microsoft-Windows-Security-Auditing
-    pub const SECURITY_AUDITING: Uuid =
-        Uuid::from_u128(0x54849625_5478_4994_a5ba_3e3b0328c30d);
+    pub const SECURITY_AUDITING: Uuid = Uuid::from_u128(0x54849625_5478_4994_a5ba_3e3b0328c30d);
 
     /// Microsoft-Windows-PowerShell
-    pub const POWERSHELL: Uuid =
-        Uuid::from_u128(0xa0c1853b_5c40_4b15_8766_3cf1c58f985a);
+    pub const POWERSHELL: Uuid = Uuid::from_u128(0xa0c1853b_5c40_4b15_8766_3cf1c58f985a);
 }
 
 /// Python wrapper for EtwProvider
