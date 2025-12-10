@@ -293,7 +293,7 @@ impl PyEtwEvent {
     /// Get event properties as a dictionary
     #[getter]
     fn properties(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
-        let dict = PyDict::new(py);
+        let dict = PyDict::new_bound(py);
         for (key, value) in &self.inner.properties {
             dict.set_item(key, event_value_to_py(py, value)?)?;
         }
@@ -332,9 +332,7 @@ impl PyEtwEvent {
     #[getter]
     fn stack_trace(&self, py: Python<'_>) -> Option<Py<PyList>> {
         self.inner.stack_trace.as_ref().map(|trace| {
-            PyList::new(py, trace.iter().map(|&addr| addr))
-                .unwrap()
-                .into()
+            PyList::new_bound(py, trace.iter().map(|&addr| addr)).into()
         })
     }
 
@@ -384,35 +382,36 @@ impl PyEtwEvent {
 
 /// Convert EventValue to Python object
 fn event_value_to_py(py: Python<'_>, value: &EventValue) -> PyResult<PyObject> {
+    use pyo3::ToPyObject;
     Ok(match value {
         EventValue::Null => py.None(),
-        EventValue::Bool(b) => b.into_pyobject(py)?.into_any().unbind(),
-        EventValue::I8(n) => n.into_pyobject(py)?.into_any().unbind(),
-        EventValue::U8(n) => n.into_pyobject(py)?.into_any().unbind(),
-        EventValue::I16(n) => n.into_pyobject(py)?.into_any().unbind(),
-        EventValue::U16(n) => n.into_pyobject(py)?.into_any().unbind(),
-        EventValue::I32(n) => n.into_pyobject(py)?.into_any().unbind(),
-        EventValue::U32(n) => n.into_pyobject(py)?.into_any().unbind(),
-        EventValue::I64(n) => n.into_pyobject(py)?.into_any().unbind(),
-        EventValue::U64(n) => n.into_pyobject(py)?.into_any().unbind(),
-        EventValue::F32(n) => n.into_pyobject(py)?.into_any().unbind(),
-        EventValue::F64(n) => n.into_pyobject(py)?.into_any().unbind(),
-        EventValue::String(s) => s.into_pyobject(py)?.into_any().unbind(),
-        EventValue::Binary(b) => b.as_slice().into_pyobject(py)?.into_any().unbind(),
-        EventValue::Guid(g) => g.to_string().into_pyobject(py)?.into_any().unbind(),
-        EventValue::Pointer(p) => p.into_pyobject(py)?.into_any().unbind(),
-        EventValue::FileTime(ft) => ft.into_pyobject(py)?.into_any().unbind(),
-        EventValue::SystemTime(st) => st.to_rfc3339().into_pyobject(py)?.into_any().unbind(),
-        EventValue::Sid(s) => s.into_pyobject(py)?.into_any().unbind(),
+        EventValue::Bool(b) => b.to_object(py),
+        EventValue::I8(n) => n.to_object(py),
+        EventValue::U8(n) => n.to_object(py),
+        EventValue::I16(n) => n.to_object(py),
+        EventValue::U16(n) => n.to_object(py),
+        EventValue::I32(n) => n.to_object(py),
+        EventValue::U32(n) => n.to_object(py),
+        EventValue::I64(n) => n.to_object(py),
+        EventValue::U64(n) => n.to_object(py),
+        EventValue::F32(n) => n.to_object(py),
+        EventValue::F64(n) => n.to_object(py),
+        EventValue::String(s) => s.to_object(py),
+        EventValue::Binary(b) => b.as_slice().to_object(py),
+        EventValue::Guid(g) => g.to_string().to_object(py),
+        EventValue::Pointer(p) => p.to_object(py),
+        EventValue::FileTime(ft) => ft.to_object(py),
+        EventValue::SystemTime(st) => st.to_rfc3339().to_object(py),
+        EventValue::Sid(s) => s.to_object(py),
         EventValue::Array(arr) => {
-            let list = PyList::empty(py);
+            let list = PyList::empty_bound(py);
             for item in arr {
                 list.append(event_value_to_py(py, item)?)?;
             }
             list.into()
         }
         EventValue::Struct(map) => {
-            let dict = PyDict::new(py);
+            let dict = PyDict::new_bound(py);
             for (k, v) in map {
                 dict.set_item(k, event_value_to_py(py, v)?)?;
             }

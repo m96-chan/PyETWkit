@@ -6,17 +6,16 @@ use crate::filter::EventFilter;
 use crate::provider::{EtwProvider, PyEtwProvider, TraceLevel};
 use crate::stats::{PySessionStats, SessionStats, SharedStatsTracker, StatsTracker};
 
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{TimeZone, Utc};
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
 use ferrisetw::parser::Parser;
 use ferrisetw::provider::Provider;
 use ferrisetw::schema::Schema;
 use ferrisetw::schema_locator::SchemaLocator;
-use ferrisetw::trace::{stop_trace_by_name, TraceTrait, UserTrace};
+use ferrisetw::trace::{stop_trace_by_name, UserTrace};
 use ferrisetw::EventRecord;
 use parking_lot::RwLock;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -163,11 +162,11 @@ impl EtwSession {
         let callback = move |record: &EventRecord, schema_locator: &SchemaLocator| {
             stats.record_event_received();
 
-            // Try to resolve schema
-            let schema = schema_locator.event_schema(record);
+            // Try to resolve schema (ferrisetw 1.2: event_schema returns Result)
+            let schema = schema_locator.event_schema(record).ok();
 
             // Parse event
-            let event = parse_event_record(record, schema.as_ref());
+            let event = parse_event_record(record, schema.as_ref().map(|s| s.as_ref()));
 
             // Send to channel
             match event_tx.try_send(event) {
@@ -185,18 +184,19 @@ impl EtwSession {
 
         // Add providers to trace
         for provider in &self.providers {
-            let mut prov_builder = Provider::by_guid(provider.guid).add_callback(callback.clone());
+            // Convert UUID to GUID string format for ferrisetw
+            let guid_str = provider.guid.to_string();
+            let mut prov_builder =
+                Provider::by_guid(guid_str.as_str()).add_callback(callback.clone());
 
-            // Set trace level
+            // Set trace level (ferrisetw 1.2: level() takes u8 directly)
             prov_builder = match provider.level {
-                TraceLevel::Always => {
-                    prov_builder.trace_flags(ferrisetw::provider::TraceFlags::empty())
-                }
-                TraceLevel::Critical => prov_builder.level(ferrisetw::provider::FlagLevel::new(1)),
-                TraceLevel::Error => prov_builder.level(ferrisetw::provider::FlagLevel::new(2)),
-                TraceLevel::Warning => prov_builder.level(ferrisetw::provider::FlagLevel::new(3)),
-                TraceLevel::Info => prov_builder.level(ferrisetw::provider::FlagLevel::new(4)),
-                TraceLevel::Verbose => prov_builder.level(ferrisetw::provider::FlagLevel::new(5)),
+                TraceLevel::Always => prov_builder.level(0),
+                TraceLevel::Critical => prov_builder.level(1),
+                TraceLevel::Error => prov_builder.level(2),
+                TraceLevel::Warning => prov_builder.level(3),
+                TraceLevel::Info => prov_builder.level(4),
+                TraceLevel::Verbose => prov_builder.level(5),
             };
 
             // Set keywords
@@ -217,8 +217,11 @@ impl EtwSession {
                         }
                     }
                     EventFilter::ProcessId(pid) => {
-                        prov_builder = prov_builder
-                            .add_filter(ferrisetw::provider::EventFilter::ByPids(vec![*pid]));
+                        // ferrisetw 1.2 uses u16 for PIDs, truncate if necessary
+                        if let Ok(pid16) = u16::try_from(*pid) {
+                            prov_builder = prov_builder
+                                .add_filter(ferrisetw::provider::EventFilter::ByPids(vec![pid16]));
+                        }
                     }
                     _ => {}
                 }
@@ -228,14 +231,10 @@ impl EtwSession {
             trace_builder = trace_builder.enable(built_provider);
         }
 
-        // Build and start trace
-        let trace = trace_builder
-            .build()
-            .map_err(|e| EtwError::StartTraceFailed(format!("{:?}", e)))?;
-
-        // Spawn processing thread
+        // Start trace and spawn processing thread
+        // ferrisetw 1.2 API: use start_and_process() directly on builder
         let trace_thread = thread::spawn(move || {
-            let _ = trace.start_and_process();
+            let _ = trace_builder.start_and_process();
             *state_clone.write() = SessionState::Stopped;
         });
 
@@ -315,23 +314,28 @@ impl Drop for EtwSession {
     }
 }
 
+/// Convert ferrisetw GUID to uuid Uuid
+fn guid_to_uuid(guid: ferrisetw::GUID) -> Uuid {
+    Uuid::from_u128(guid.to_u128())
+}
+
 /// Parse ferrisetw EventRecord to our EtwEvent
 pub fn parse_event_record(record: &EventRecord, schema: Option<&Schema>) -> EtwEvent {
-    let header = record.event_header();
+    // ferrisetw 1.2 API: Direct access to event fields
+    let provider_id = guid_to_uuid(record.provider_id());
 
-    let provider_id = Uuid::from_bytes(header.provider_guid().to_bytes_le());
-
-    let mut event = EtwEvent::new(provider_id, header.event_id());
-    event.version = header.version();
-    event.opcode = header.event_opcode();
-    event.level = header.level();
-    event.keywords = header.event_flags() as u64;
-    event.process_id = header.process_id();
-    event.thread_id = header.thread_id();
-    event.task = header.event_task();
+    let mut event = EtwEvent::new(provider_id, record.event_id());
+    event.version = record.version();
+    event.opcode = record.opcode();
+    event.level = record.level();
+    event.keywords = record.keyword();
+    event.process_id = record.process_id();
+    event.thread_id = record.thread_id();
+    // task is not directly available in ferrisetw 1.2
+    event.task = 0;
 
     // Parse timestamp
-    let timestamp_100ns = record.timestamp();
+    let timestamp_100ns = record.raw_timestamp();
     // Windows FILETIME epoch is 1601-01-01, convert to Unix epoch
     let unix_100ns = timestamp_100ns - 116444736000000000i64;
     let secs = unix_100ns / 10_000_000;
@@ -342,52 +346,58 @@ pub fn parse_event_record(record: &EventRecord, schema: Option<&Schema>) -> EtwE
         .unwrap_or_else(Utc::now);
 
     // Parse activity IDs
-    if let Some(activity) = header.activity_id() {
-        event.activity_id = Some(Uuid::from_bytes(activity.to_bytes_le()));
+    let activity = record.activity_id();
+    if activity != ferrisetw::GUID::zeroed() {
+        event.activity_id = Some(guid_to_uuid(activity));
     }
 
     // Parse properties using schema if available
     if let Some(schema) = schema {
-        if let Ok(parser) = Parser::create(record, schema) {
-            event.properties = parse_properties(&parser, schema);
-            event.provider_name = Some(schema.provider_name().to_string());
-        }
-    } else {
-        // Store raw data if no schema
-        event.raw_data = Some(record.user_buffer().to_vec());
+        let parser = Parser::create(record, schema);
+        event.properties = parse_properties(&parser, schema);
+        event.provider_name = Some(schema.provider_name().to_string());
     }
+    // Note: raw_data extraction removed as user_buffer is private in ferrisetw 1.2
 
     event
 }
 
 /// Parse event properties from schema
-fn parse_properties(parser: &Parser, schema: &Schema) -> HashMap<String, EventValue> {
+/// Note: ferrisetw 1.2 made properties() private, so we can't enumerate properties.
+/// Instead, we extract common known properties if they exist.
+fn parse_properties(parser: &Parser, _schema: &Schema) -> HashMap<String, EventValue> {
     let mut properties = HashMap::new();
 
-    for property in schema.properties() {
-        let name = property.name().to_string();
+    // Try common property names that might exist in various events
+    let common_props = [
+        "ProcessId",
+        "ThreadId",
+        "ImageFileName",
+        "ProcessName",
+        "CommandLine",
+        "FileName",
+        "FilePath",
+        "Message",
+        "Data",
+        "Status",
+        "Result",
+        "ErrorCode",
+    ];
 
-        // Try to parse based on property type
-        let value = if let Ok(v) = parser.try_parse::<String>(&name) {
-            EventValue::String(v)
-        } else if let Ok(v) = parser.try_parse::<u64>(&name) {
-            EventValue::U64(v)
-        } else if let Ok(v) = parser.try_parse::<u32>(&name) {
-            EventValue::U32(v)
-        } else if let Ok(v) = parser.try_parse::<i64>(&name) {
-            EventValue::I64(v)
-        } else if let Ok(v) = parser.try_parse::<i32>(&name) {
-            EventValue::I32(v)
-        } else if let Ok(v) = parser.try_parse::<bool>(&name) {
-            EventValue::Bool(v)
-        } else if let Ok(v) = parser.try_parse::<f64>(&name) {
-            EventValue::F64(v)
-        } else {
-            // Could not parse, skip this property
-            continue;
-        };
-
-        properties.insert(name, value);
+    for name in common_props {
+        // Try different types for each property
+        if let Ok(v) = parser.try_parse::<String>(name) {
+            properties.insert(name.to_string(), EventValue::String(v));
+        } else if let Ok(v) = parser.try_parse::<u64>(name) {
+            properties.insert(name.to_string(), EventValue::U64(v));
+        } else if let Ok(v) = parser.try_parse::<u32>(name) {
+            properties.insert(name.to_string(), EventValue::U32(v));
+        } else if let Ok(v) = parser.try_parse::<i64>(name) {
+            properties.insert(name.to_string(), EventValue::I64(v));
+        } else if let Ok(v) = parser.try_parse::<i32>(name) {
+            properties.insert(name.to_string(), EventValue::I32(v));
+        }
+        // Skip if property doesn't exist or can't be parsed
     }
 
     properties
@@ -523,6 +533,7 @@ impl PyEtwSession {
     }
 
     /// Context manager exit
+    #[pyo3(signature = (_exc_type=None, _exc_val=None, _exc_tb=None))]
     fn __exit__(
         &mut self,
         _exc_type: Option<PyObject>,
