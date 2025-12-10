@@ -201,10 +201,8 @@ impl KernelSession {
 
             // Parse event (ferrisetw 1.2: event_schema returns Result)
             let schema = schema_locator.event_schema(record).ok();
-            let event = crate::session::parse_event_record(
-                record,
-                schema.as_ref().map(|s| s.as_ref()),
-            );
+            let event =
+                crate::session::parse_event_record(record, schema.as_ref().map(|s| s.as_ref()));
 
             // Send to channel
             match event_tx.try_send(event) {

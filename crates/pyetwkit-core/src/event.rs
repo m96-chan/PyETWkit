@@ -331,9 +331,10 @@ impl PyEtwEvent {
     /// Get stack trace addresses (if captured)
     #[getter]
     fn stack_trace(&self, py: Python<'_>) -> Option<Py<PyList>> {
-        self.inner.stack_trace.as_ref().map(|trace| {
-            PyList::new_bound(py, trace.iter().map(|&addr| addr)).into()
-        })
+        self.inner
+            .stack_trace
+            .as_ref()
+            .map(|trace| PyList::new_bound(py, trace.iter().map(|&addr| addr)).into())
     }
 
     /// Convert to JSON string
