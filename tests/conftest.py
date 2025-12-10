@@ -19,7 +19,9 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "slow: marks tests as slow running")
 
 
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:  # noqa: ARG001
     """Skip tests that require admin if not running as admin."""
     if not is_admin():
         skip_admin = pytest.mark.skip(reason="Requires administrator privileges")

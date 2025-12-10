@@ -38,8 +38,8 @@ try:
         EtwSession,
         EventFilter,
         SessionStats,
+        raw,  # Low-level direct API
     )
-    from pyetwkit._core import raw  # Low-level direct API
 
     _CORE_AVAILABLE = True
 except ImportError:

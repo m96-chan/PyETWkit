@@ -1,7 +1,5 @@
 """Tests for EtwStreamer (asynchronous API)."""
 
-import asyncio
-
 import pytest
 
 # Skip all tests if native extension is not available

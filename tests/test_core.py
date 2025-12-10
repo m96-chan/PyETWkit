@@ -6,7 +6,7 @@ import pytest
 def check_extension_available() -> bool:
     """Check if native extension is available."""
     try:
-        from pyetwkit._core import EtwEvent, EtwProvider, EtwSession
+        from pyetwkit._core import EtwEvent, EtwProvider, EtwSession  # noqa: F401
 
         return True
     except ImportError:

@@ -8,10 +8,11 @@ async iterator support and async context manager.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Sequence
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pyetwkit._core import EtwEvent, EtwProvider, EtwSession, SessionStats
+    from pyetwkit._core import EtwEvent, EtwProvider, SessionStats
 
 
 class EtwStreamer:

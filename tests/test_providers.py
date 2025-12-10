@@ -1,7 +1,5 @@
 """Tests for provider factory classes."""
 
-import pytest
-
 # These tests don't require the native extension
 from pyetwkit.providers import (
     DotNetProvider,

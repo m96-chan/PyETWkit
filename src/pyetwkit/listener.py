@@ -7,7 +7,8 @@ iterator-based access and context manager support.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterator, Sequence
+from collections.abc import Iterator, Sequence
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pyetwkit._core import EtwEvent, EtwProvider, SessionStats

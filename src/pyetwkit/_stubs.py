@@ -7,7 +7,7 @@ These stubs provide type hints when the native extension is not available
 
 from __future__ import annotations
 
-from typing import Any, Iterator
+from typing import Any
 
 
 class EtwEvent:
