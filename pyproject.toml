@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "pyetwkit"
-version = "0.1.0"
+version = "1.0.0"
 description = "High-performance ETW (Event Tracing for Windows) consumer library for Python"
 readme = "README.md"
 license = { text = "MIT" }
@@ -28,7 +28,10 @@ classifiers = [
 ]
 keywords = ["etw", "windows", "tracing", "events", "monitoring", "logging"]
 
-dependencies = []
+dependencies = [
+    "click>=8.0",
+    "pyyaml>=6.0",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -42,6 +45,12 @@ dev = [
 export = [
     "pandas>=2.0",
     "pyarrow>=14.0",
+]
+docs = [
+    "sphinx>=7.0",
+    "sphinx-rtd-theme>=2.0",
+    "sphinx-autodoc-typehints>=2.0",
+    "myst-parser>=3.0",
 ]
 
 [project.urls]
