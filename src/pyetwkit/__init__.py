@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-__version__ = "0.1.0"
+__version__ = "1.1.0"
 __author__ = "m96-chan"
 
 # Import core types from Rust extension
@@ -65,6 +65,31 @@ from pyetwkit.providers import (
 )
 from pyetwkit.streamer import EtwStreamer
 
+# v1.1: Enhanced APIs
+from pyetwkit.async_api import AsyncEtwSession, EventBatcher, gather_events, stream_to_queue
+from pyetwkit.filtering import (
+    EventFilter,
+    EventFilterBuilder,
+    event_id_filter,
+    level_filter,
+    process_filter,
+    property_filter,
+    provider_filter,
+)
+from pyetwkit.typed_events import (
+    DnsQueryEvent,
+    DnsResponseEvent,
+    ImageLoadEvent,
+    ProcessStartEvent,
+    ProcessStopEvent,
+    TcpConnectEvent,
+    TcpDisconnectEvent,
+    ThreadStartEvent,
+    ThreadStopEvent,
+    TypedEvent,
+    to_typed_event,
+)
+
 __all__ = [
     # Version info
     "__version__",
@@ -73,7 +98,6 @@ __all__ = [
     "EtwEvent",
     "EtwProvider",
     "EtwSession",
-    "EventFilter",
     "SessionStats",
     # High-level APIs
     "EtwListener",
@@ -86,6 +110,31 @@ __all__ = [
     "RegistryProvider",
     # Low-level API
     "raw",
+    # v1.1: Async API
+    "AsyncEtwSession",
+    "EventBatcher",
+    "gather_events",
+    "stream_to_queue",
+    # v1.1: Filtering
+    "EventFilter",
+    "EventFilterBuilder",
+    "event_id_filter",
+    "level_filter",
+    "process_filter",
+    "property_filter",
+    "provider_filter",
+    # v1.1: Typed events
+    "TypedEvent",
+    "ProcessStartEvent",
+    "ProcessStopEvent",
+    "ThreadStartEvent",
+    "ThreadStopEvent",
+    "ImageLoadEvent",
+    "DnsQueryEvent",
+    "DnsResponseEvent",
+    "TcpConnectEvent",
+    "TcpDisconnectEvent",
+    "to_typed_event",
 ]
 
 
