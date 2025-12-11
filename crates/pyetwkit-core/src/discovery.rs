@@ -275,25 +275,22 @@ impl From<ProviderDetails> for PyProviderDetails {
 /// List all ETW providers on the system
 #[pyfunction]
 pub fn py_list_providers() -> PyResult<Vec<PyProviderInfo>> {
-    list_providers()
-        .map(|providers| providers.into_iter().map(PyProviderInfo::from).collect())
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    let providers = list_providers()?;
+    Ok(providers.into_iter().map(PyProviderInfo::from).collect())
 }
 
 /// Search providers by keyword
 #[pyfunction]
 pub fn py_search_providers(keyword: &str) -> PyResult<Vec<PyProviderInfo>> {
-    search_providers(keyword)
-        .map(|providers| providers.into_iter().map(PyProviderInfo::from).collect())
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    let providers = search_providers(keyword)?;
+    Ok(providers.into_iter().map(PyProviderInfo::from).collect())
 }
 
 /// Get detailed info for a specific provider
 #[pyfunction]
 pub fn py_get_provider_info(name_or_guid: &str) -> PyResult<Option<PyProviderDetails>> {
-    get_provider_info(name_or_guid)
-        .map(|opt| opt.map(PyProviderDetails::from))
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    let opt = get_provider_info(name_or_guid)?;
+    Ok(opt.map(PyProviderDetails::from))
 }
 
 #[cfg(test)]
