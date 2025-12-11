@@ -24,11 +24,11 @@ class TestDashboardServer:
         assert dashboard.port == 8080
 
     def test_dashboard_default_port(self) -> None:
-        """Test default port is 8080."""
+        """Test default port is 7860 (Gradio default)."""
         from pyetwkit.dashboard import Dashboard
 
         dashboard = Dashboard()
-        assert dashboard.port == 8080
+        assert dashboard.port == 7860
 
     def test_dashboard_custom_host(self) -> None:
         """Test custom host configuration."""
@@ -73,19 +73,19 @@ class TestDashboardWebSocket:
         assert handler is not None
 
     def test_websocket_broadcast_method(self) -> None:
-        """Test that broadcast method exists."""
+        """Test that EventBuffer has add_event method (replaces broadcast)."""
         from pyetwkit.dashboard import WebSocketHandler
 
         handler = WebSocketHandler()
-        assert hasattr(handler, "broadcast")
+        assert hasattr(handler, "add_event")
 
     def test_websocket_client_management(self) -> None:
-        """Test client connection management."""
+        """Test EventBuffer has get_events method (replaces clients)."""
         from pyetwkit.dashboard import WebSocketHandler
 
         handler = WebSocketHandler()
-        assert hasattr(handler, "clients")
-        assert len(handler.clients) == 0
+        assert hasattr(handler, "get_events")
+        assert len(handler.get_events()) == 0
 
 
 class TestEventSerializer:
@@ -129,6 +129,7 @@ class TestEventSerializer:
             event.provider_name = "TestProvider"
             event.timestamp = 1234567890.0 + i
             event.process_id = 1234
+            event.thread_id = 5678
             event.properties = {}
             mock_events.append(event)
 
@@ -152,7 +153,7 @@ class TestDashboardConfig:
 
         config = DashboardConfig()
         assert config.host == "127.0.0.1"
-        assert config.port == 8080
+        assert config.port == 7860  # Gradio default
         assert config.enable_cors is True
         assert config.max_clients == 100
 
