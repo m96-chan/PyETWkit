@@ -180,7 +180,8 @@ jobs:
         run: |
           uv pip install pytest pytest-asyncio pytest-cov
           $wheel = Get-ChildItem dist/*.whl | Select-Object -First 1
-          uv pip install $wheel.FullName
+          Write-Host "Installing wheel: $($wheel.FullName)"
+          uv pip install "$($wheel.FullName)" --no-index --find-links=dist/
         shell: pwsh
 
       - name: Run tests
