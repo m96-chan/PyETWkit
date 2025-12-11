@@ -143,7 +143,7 @@ jobs:
         run: uv pip install maturin
 
       - name: Build wheel
-        run: .venv\Scripts\maturin.exe build --release --strip
+        run: .venv\Scripts\maturin.exe build --release --strip -m crates/pyetwkit-core/Cargo.toml
         continue-on-error: true  # v0.1.0: Rust compilation issues pending
 
       - name: Upload wheels
