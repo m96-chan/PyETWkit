@@ -82,9 +82,15 @@ class AsyncEtwSession:
             # Try to use static methods for known providers
             if provider.lower() == "microsoft-windows-dns-client" or "dns" in provider.lower():
                 prov = CoreProvider.dns_client().level(level)
-            elif provider.lower() == "microsoft-windows-kernel-process" or "process" in provider.lower():
+            elif (
+                provider.lower() == "microsoft-windows-kernel-process"
+                or "process" in provider.lower()
+            ):
                 prov = CoreProvider.kernel_process().level(level)
-            elif provider.lower() == "microsoft-windows-powershell" or "powershell" in provider.lower():
+            elif (
+                provider.lower() == "microsoft-windows-powershell"
+                or "powershell" in provider.lower()
+            ):
                 prov = CoreProvider.powershell().level(level)
             else:
                 # Assume it's a GUID
@@ -95,9 +101,7 @@ class AsyncEtwSession:
         self._session.add_provider(prov)
         return self
 
-    def on_event(
-        self, callback: Callable[[EtwEvent], Awaitable[None]]
-    ) -> AsyncEtwSession:
+    def on_event(self, callback: Callable[[EtwEvent], Awaitable[None]]) -> AsyncEtwSession:
         """Register an async callback for each event.
 
         Args:
@@ -283,9 +287,7 @@ async def gather_events(
 
     async def collect(session: AsyncEtwSession) -> list[EtwEvent]:
         events = []
-        async for event in session.events(
-            timeout=timeout, max_events=max_per_session
-        ):
+        async for event in session.events(timeout=timeout, max_events=max_per_session):
             events.append(event)
         return events
 
@@ -370,9 +372,7 @@ class EventBatcher:
             batch.append(event)
             now = asyncio.get_event_loop().time()
 
-            should_yield = (
-                len(batch) >= self.batch_size or (now - last_yield) >= self.timeout
-            )
+            should_yield = len(batch) >= self.batch_size or (now - last_yield) >= self.timeout
 
             if should_yield and batch:
                 yield batch
