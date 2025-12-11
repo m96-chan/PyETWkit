@@ -251,5 +251,111 @@ def listen(
         sys.exit(1)
 
 
+@main.command()
+@click.argument("input_file", type=click.Path(exists=True))
+@click.option("--output", "-o", type=click.Path(), required=True, help="Output file path")
+@click.option(
+    "--format",
+    "-f",
+    "output_format",
+    type=click.Choice(["csv", "json", "jsonl", "parquet"]),
+    default="csv",
+    help="Output format",
+)
+@click.option("--provider", "-p", multiple=True, help="Filter by provider name or GUID")
+@click.option("--event-id", "-e", multiple=True, type=int, help="Filter by event ID")
+@click.option("--limit", "-n", type=int, help="Maximum number of events to export")
+def export(
+    input_file: str,
+    output: str,
+    output_format: str,
+    provider: tuple[str, ...],
+    event_id: tuple[int, ...],
+    limit: int | None,
+) -> None:
+    """Export ETL file to various formats.
+
+    Reads an ETL (Event Trace Log) file and exports events to CSV, JSON,
+    JSONL, or Parquet format.
+
+    Examples:
+
+        # Export to CSV
+        pyetwkit export trace.etl -o events.csv
+
+        # Export to Parquet
+        pyetwkit export trace.etl -o events.parquet -f parquet
+
+        # Filter by provider
+        pyetwkit export trace.etl -o filtered.csv -p Microsoft-Windows-Kernel-Process
+
+        # Export first 1000 events
+        pyetwkit export trace.etl -o sample.json -f json --limit 1000
+    """
+    try:
+        from pyetwkit._core import EtlReader
+    except ImportError:
+        click.echo("Error: Native extension not available", err=True)
+        sys.exit(1)
+
+    click.echo(f"Reading ETL file: {input_file}")
+
+    try:
+        reader = EtlReader(input_file)
+        events = []
+        count = 0
+
+        for event in reader.events():
+            # Apply filters
+            if provider:
+                event_provider = event.provider_name or str(event.provider_id)
+                if not any(p.lower() in event_provider.lower() for p in provider):
+                    continue
+
+            if event_id and event.event_id not in event_id:
+                continue
+
+            events.append(event)
+            count += 1
+
+            if limit and count >= limit:
+                break
+
+            if count % 10000 == 0:
+                click.echo(f"  Processed {count} events...")
+
+        click.echo(f"Collected {len(events)} events")
+
+        if not events:
+            click.echo("No events to export")
+            return
+
+        # Export based on format
+        click.echo(f"Exporting to {output}...")
+
+        if output_format == "csv":
+            from pyetwkit.export import to_csv
+
+            to_csv(events, output)
+        elif output_format == "json":
+            from pyetwkit.export import to_json
+
+            to_json(events, output)
+        elif output_format == "jsonl":
+            from pyetwkit.export import to_jsonl
+
+            to_jsonl(events, output)
+        elif output_format == "parquet":
+            from pyetwkit.export import to_parquet
+
+            to_parquet(events, output)
+
+        click.echo(f"Exported {len(events)} events to {output}")
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     main()
