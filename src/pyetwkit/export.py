@@ -62,7 +62,7 @@ def to_dataframe(
         import pandas as pd
     except ImportError as e:
         raise ImportError(
-            "pandas is required for DataFrame export. " "Install it with: pip install pandas"
+            "pandas is required for DataFrame export. Install it with: pip install pandas"
         ) from e
 
     if not events:
@@ -174,7 +174,7 @@ def to_parquet(
         import pyarrow  # noqa: F401
     except ImportError as e:
         raise ImportError(
-            "pyarrow is required for Parquet export. " "Install it with: pip install pyarrow"
+            "pyarrow is required for Parquet export. Install it with: pip install pyarrow"
         ) from e
 
     df = to_dataframe(events, flatten=flatten)
@@ -203,7 +203,7 @@ def to_arrow(
         import pyarrow as pa
     except ImportError as e:
         raise ImportError(
-            "pyarrow is required for Arrow export. " "Install it with: pip install pyarrow"
+            "pyarrow is required for Arrow export. Install it with: pip install pyarrow"
         ) from e
 
     df = to_dataframe(events, flatten=flatten)

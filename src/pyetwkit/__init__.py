@@ -60,6 +60,26 @@ except ImportError:
 import contextlib
 
 from pyetwkit.async_api import AsyncEtwSession, EventBatcher, gather_events, stream_to_queue
+
+# v3.0: Correlation Engine
+from pyetwkit.correlation import (
+    CorrelationConfig,
+    CorrelationEngine,
+    CorrelationGroup,
+    CorrelationKeyType,
+)
+
+# v3.0: Dashboard
+from pyetwkit.dashboard import Dashboard, DashboardConfig, EventSerializer, WebSocketHandler
+
+# v3.0: OTLP Exporter
+from pyetwkit.exporters import (
+    ExportMode,
+    OtlpExporter,
+    OtlpExporterConfig,
+    OtlpFileExporter,
+    SpanMapper,
+)
 from pyetwkit.filtering import (
     EventFilter,
     EventFilterBuilder,
@@ -89,6 +109,17 @@ from pyetwkit.providers import (
     NetworkProvider,
     ProcessProvider,
     RegistryProvider,
+)
+
+# v3.0: Recording & Replay
+from pyetwkit.recording import (
+    CompressionType,
+    EtwpackHeader,
+    EtwpackIndex,
+    Player,
+    Recorder,
+    RecorderConfig,
+    convert_etl_to_etwpack,
 )
 
 # v2.0: Rust-side filtering
@@ -169,6 +200,30 @@ __all__ = [
     "FieldDefinition",
     "TypedEventFactory",
     "ManifestCache",
+    # v3.0: Dashboard
+    "Dashboard",
+    "DashboardConfig",
+    "EventSerializer",
+    "WebSocketHandler",
+    # v3.0: Correlation Engine
+    "CorrelationEngine",
+    "CorrelationConfig",
+    "CorrelationGroup",
+    "CorrelationKeyType",
+    # v3.0: Recording & Replay
+    "Recorder",
+    "Player",
+    "RecorderConfig",
+    "EtwpackHeader",
+    "EtwpackIndex",
+    "CompressionType",
+    "convert_etl_to_etwpack",
+    # v3.0: OTLP Exporter
+    "OtlpExporter",
+    "OtlpExporterConfig",
+    "OtlpFileExporter",
+    "SpanMapper",
+    "ExportMode",
 ]
 
 

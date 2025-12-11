@@ -252,6 +252,128 @@ def listen(
 
 
 @main.command()
+@click.argument("provider", required=False)
+@click.option("--profile", "-p", help="Use a provider profile")
+@click.option("--port", default=7860, help="Dashboard port (default: 7860)")
+@click.option("--host", default="127.0.0.1", help="Dashboard host (default: 127.0.0.1)")
+@click.option("--share", is_flag=True, help="Create a public Gradio share link")
+def dashboard(
+    provider: str | None,
+    profile: str | None,
+    port: int,
+    host: str,
+    share: bool,
+) -> None:
+    """Launch a live dashboard for ETW event monitoring.
+
+    Opens a browser-based UI to visualize ETW events in real-time.
+    Requires the 'dashboard' extra: pip install pyetwkit[dashboard]
+
+    Examples:
+
+        # Start dashboard with a specific provider
+        pyetwkit dashboard Microsoft-Windows-Kernel-Process
+
+        # Use a profile
+        pyetwkit dashboard --profile network
+
+        # Custom port and public share
+        pyetwkit dashboard --profile audio --port 8080 --share
+    """
+    try:
+        from pyetwkit.dashboard import Dashboard, DashboardConfig
+    except ImportError:
+        click.echo(
+            "Error: Dashboard requires Gradio. Install with: pip install pyetwkit[dashboard]",
+            err=True,
+        )
+        sys.exit(1)
+
+    if not provider and not profile:
+        click.echo("Error: Please specify a provider or --profile", err=True)
+        click.echo(
+            "Usage: pyetwkit dashboard PROVIDER or pyetwkit dashboard --profile PROFILE", err=True
+        )
+        sys.exit(1)
+
+    # Get providers from profile or direct specification
+    providers_to_use = []
+    if profile:
+        from pyetwkit.profiles import get_profile
+
+        prof = get_profile(profile)
+        if prof is None:
+            click.echo(f"Error: Profile '{profile}' not found", err=True)
+            sys.exit(1)
+        for pc in prof.providers:
+            providers_to_use.append(pc.name)
+    else:
+        providers_to_use.append(provider)
+
+    config = DashboardConfig(
+        host=host,
+        port=port,
+        share=share,
+    )
+
+    dashboard_instance = Dashboard(host=host, port=port, config=config)
+    for p in providers_to_use:
+        dashboard_instance.add_provider(p)
+
+    click.echo("Starting PyETWkit Dashboard...")
+    click.echo(f"  URL: http://{host}:{port}")
+    click.echo(f"  Providers: {', '.join(providers_to_use)}")
+    if share:
+        click.echo("  Creating public share link...")
+    click.echo("\nPress Ctrl+C to stop\n")
+
+    try:
+        # Import here to avoid import errors when just showing help
+        try:
+            from pyetwkit._core import EtwProvider, EtwSession
+        except ImportError:
+            click.echo(
+                "Note: Native extension not available, dashboard will show no live events", err=True
+            )
+            dashboard_instance.launch(blocking=True)
+            return
+
+        # Start ETW session in background thread
+        import threading
+
+        session = EtwSession("PyETWkitDashboard")
+
+        for p in providers_to_use:
+            prov = EtwProvider(p, p)
+            prov = prov.with_level(4)  # Info level
+            session.add_provider(prov)
+
+        session.start()
+
+        def event_collector() -> None:
+            """Collect events from the session."""
+            while True:
+                try:
+                    event = session.next_event_timeout(100)
+                    if event:
+                        dashboard_instance.add_event(event)
+                except Exception:
+                    break
+
+        collector_thread = threading.Thread(target=event_collector, daemon=True)
+        collector_thread.start()
+
+        dashboard_instance.launch(blocking=True)
+
+    except KeyboardInterrupt:
+        click.echo("\nShutting down dashboard...")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        click.echo("Note: ETW sessions require administrator privileges", err=True)
+        sys.exit(1)
+
+
+@main.command()
 @click.argument("input_file", type=click.Path(exists=True))
 @click.option("--output", "-o", type=click.Path(), required=True, help="Output file path")
 @click.option(
