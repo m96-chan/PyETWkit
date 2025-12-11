@@ -7,15 +7,19 @@ enabling live ETW event monitoring in a browser-based UI.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
+from itertools import islice
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -44,6 +48,15 @@ class DashboardStats:
 class EventSerializer:
     """Serializes ETW events to JSON for transmission."""
 
+    # Attribute mapping for efficient extraction
+    _ATTR_DEFAULTS: dict[str, Any] = {
+        "event_id": 0,
+        "provider_name": "",
+        "process_id": 0,
+        "thread_id": 0,
+        "properties": {},
+    }
+
     def serialize(self, event: Any) -> str:
         """Serialize a single event to JSON.
 
@@ -57,14 +70,9 @@ class EventSerializer:
         if hasattr(timestamp, "isoformat"):
             timestamp = timestamp.isoformat()
 
-        data = {
-            "event_id": getattr(event, "event_id", 0),
-            "provider_name": getattr(event, "provider_name", ""),
-            "timestamp": timestamp,
-            "process_id": getattr(event, "process_id", 0),
-            "thread_id": getattr(event, "thread_id", 0),
-            "properties": getattr(event, "properties", {}),
-        }
+        # Extract attributes using mapping
+        data = {key: getattr(event, key, default) for key, default in self._ATTR_DEFAULTS.items()}
+        data["timestamp"] = timestamp
         return json.dumps(data)
 
     def serialize_batch(self, events: list[Any]) -> str:
@@ -127,7 +135,7 @@ class EventBuffer:
                 self._last_rate_time = now
 
     def get_events(self, limit: int = 100) -> list[dict[str, Any]]:
-        """Get recent events.
+        """Get recent events efficiently.
 
         Args:
             limit: Maximum number of events to return.
@@ -136,7 +144,12 @@ class EventBuffer:
             List of event dictionaries.
         """
         with self._lock:
-            return list(self._events)[-limit:]
+            event_count = len(self._events)
+            if event_count <= limit:
+                return list(self._events)
+            # Use islice to avoid full list conversion
+            start_idx = event_count - limit
+            return list(islice(self._events, start_idx, None))
 
     def get_stats(self) -> dict[str, Any]:
         """Get buffer statistics.
@@ -251,6 +264,7 @@ class Dashboard:
         try:
             import gradio as gr
         except ImportError as e:
+            logger.error("Failed to import Gradio: %s", e)
             raise ImportError(
                 "Gradio is required for the dashboard. "
                 "Install it with: pip install pyetwkit[dashboard]"

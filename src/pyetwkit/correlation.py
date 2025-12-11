@@ -7,7 +7,8 @@ using shared identifiers (PID, TID, Handle, SessionID) to build unified activity
 from __future__ import annotations
 
 import json
-from collections import defaultdict
+import logging
+from collections import defaultdict, deque
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -16,6 +17,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 
 class CorrelationKeyType(Enum):
@@ -93,10 +96,12 @@ class CorrelationEngine:
         """
         self._config = config or CorrelationConfig()
         self._providers: list[str] = []
-        self._events: list[Any] = []
-        self._by_pid: dict[int, list[Any]] = defaultdict(list)
-        self._by_tid: dict[int, list[Any]] = defaultdict(list)
-        self._by_handle: dict[int, list[Any]] = defaultdict(list)
+        self._events: deque[Any] = deque()
+        self._event_id_counter = 0
+        # Use dict[int, event] for O(1) deletion instead of list
+        self._by_pid: dict[int, dict[int, Any]] = defaultdict(dict)
+        self._by_tid: dict[int, dict[int, Any]] = defaultdict(dict)
+        self._by_handle: dict[int, dict[int, Any]] = defaultdict(dict)
 
     @property
     def providers(self) -> list[str]:
@@ -126,46 +131,68 @@ class CorrelationEngine:
         Args:
             event: ETW event to add.
         """
+        # Assign internal ID for O(1) deletion
+        event_id = self._event_id_counter
+        self._event_id_counter += 1
+        event._correlation_id = event_id  # type: ignore[attr-defined]
+
         self._events.append(event)
 
         # Index by PID
         pid = getattr(event, "process_id", None)
         if pid is not None:
-            self._by_pid[pid].append(event)
+            self._by_pid[pid][event_id] = event
 
         # Index by TID
         tid = getattr(event, "thread_id", None)
         if tid is not None:
-            self._by_tid[tid].append(event)
+            self._by_tid[tid][event_id] = event
 
         # Index by Handle if present
         if self._config.enable_handle_tracking:
             props = getattr(event, "properties", {})
             handle = props.get("handle") or props.get("Handle")
             if handle is not None:
-                self._by_handle[handle].append(event)
+                self._by_handle[handle][event_id] = event
 
         # Trim if over max_events
         if len(self._events) > self._config.max_events:
             self._trim_events()
 
     def _trim_events(self) -> None:
-        """Trim old events to stay within max_events limit."""
-        # Remove oldest events
+        """Trim old events to stay within max_events limit (O(1) per event)."""
         excess = len(self._events) - self._config.max_events
-        if excess > 0:
-            old_events = self._events[:excess]
-            self._events = self._events[excess:]
+        for _ in range(excess):
+            old_event = self._events.popleft()
+            event_id = getattr(old_event, "_correlation_id", None)
+            if event_id is None:
+                continue
 
-            # Remove from indexes
-            for event in old_events:
-                pid = getattr(event, "process_id", None)
-                if pid and event in self._by_pid.get(pid, []):
-                    self._by_pid[pid].remove(event)
+            # O(1) deletion from indexes
+            pid = getattr(old_event, "process_id", None)
+            if pid is not None and event_id in self._by_pid.get(pid, {}):
+                del self._by_pid[pid][event_id]
 
-                tid = getattr(event, "thread_id", None)
-                if tid and event in self._by_tid.get(tid, []):
-                    self._by_tid[tid].remove(event)
+            tid = getattr(old_event, "thread_id", None)
+            if tid is not None and event_id in self._by_tid.get(tid, {}):
+                del self._by_tid[tid][event_id]
+
+            if self._config.enable_handle_tracking:
+                props = getattr(old_event, "properties", {})
+                handle = props.get("handle") or props.get("Handle")
+                if handle is not None and event_id in self._by_handle.get(handle, {}):
+                    del self._by_handle[handle][event_id]
+
+    def _sort_by_timestamp(self, events: list[Any]) -> list[Any]:
+        """Sort events by timestamp (common helper method).
+
+        Args:
+            events: List of events to sort.
+
+        Returns:
+            Sorted list of events.
+        """
+        return sorted(events, key=lambda e: getattr(e, "timestamp", datetime.min))
 
     def correlate_by_pid(self, pid: int) -> list[Any]:
         """Get all events correlated by process ID.
@@ -176,8 +203,8 @@ class CorrelationEngine:
         Returns:
             List of events for the given PID, sorted by timestamp.
         """
-        events = self._by_pid.get(pid, [])
-        return sorted(events, key=lambda e: getattr(e, "timestamp", datetime.min))
+        events = list(self._by_pid.get(pid, {}).values())
+        return self._sort_by_timestamp(events)
 
     def correlate_by_tid(self, tid: int) -> list[Any]:
         """Get all events correlated by thread ID.
@@ -188,8 +215,8 @@ class CorrelationEngine:
         Returns:
             List of events for the given TID, sorted by timestamp.
         """
-        events = self._by_tid.get(tid, [])
-        return sorted(events, key=lambda e: getattr(e, "timestamp", datetime.min))
+        events = list(self._by_tid.get(tid, {}).values())
+        return self._sort_by_timestamp(events)
 
     def correlate_by_handle(self, handle: int) -> list[Any]:
         """Get all events correlated by handle.
@@ -200,8 +227,8 @@ class CorrelationEngine:
         Returns:
             List of events for the given handle, sorted by timestamp.
         """
-        events = self._by_handle.get(handle, [])
-        return sorted(events, key=lambda e: getattr(e, "timestamp", datetime.min))
+        events = list(self._by_handle.get(handle, {}).values())
+        return self._sort_by_timestamp(events)
 
     def correlated_groups(self) -> Iterator[CorrelationGroup]:
         """Get all correlation groups.
@@ -209,12 +236,12 @@ class CorrelationEngine:
         Yields:
             CorrelationGroup objects for each unique PID.
         """
-        for pid, events in self._by_pid.items():
-            if events:
+        for pid, events_dict in self._by_pid.items():
+            if events_dict:
                 yield CorrelationGroup(
                     key_type="pid",
                     key_value=pid,
-                    events=list(events),
+                    events=list(events_dict.values()),
                 )
 
     def trace_causality(
@@ -234,23 +261,28 @@ class CorrelationEngine:
         result = []
         pid = getattr(start_event, "process_id", None)
         start_time = getattr(start_event, "timestamp", datetime.min)
+        target_lower = target_type.lower() if target_type else None
 
         if pid is not None:
-            related = self._by_pid.get(pid, [])
+            related = self._by_pid.get(pid, {}).values()
             for event in related:
                 event_time = getattr(event, "timestamp", datetime.min)
                 # Only include events after the start event within time window
-                if event_time >= start_time:
-                    time_diff = (event_time - start_time).total_seconds() * 1000
-                    if time_diff <= self._config.time_window_ms:
-                        if target_type:
-                            provider = getattr(event, "provider_name", "").lower()
-                            if target_type.lower() in provider:
-                                result.append(event)
-                        else:
-                            result.append(event)
+                if event_time < start_time:
+                    continue
 
-        return sorted(result, key=lambda e: getattr(e, "timestamp", datetime.min))
+                time_diff = (event_time - start_time).total_seconds() * 1000
+                if time_diff > self._config.time_window_ms:
+                    continue
+
+                if target_lower:
+                    provider = getattr(event, "provider_name", "").lower()
+                    if target_lower not in provider:
+                        continue
+
+                result.append(event)
+
+        return self._sort_by_timestamp(result)
 
     def to_timeline_json(self, pid: int | None = None) -> str:
         """Export correlation data to timeline JSON.

@@ -68,10 +68,17 @@ class EtwStreamer:
         self._providers = list(providers)
         self._started = False
         self._poll_interval_ms = poll_interval_ms
+        self._loop: asyncio.AbstractEventLoop | None = None
 
         # Add providers to session
         for provider in self._providers:
             self._session.add_provider(provider)
+
+    def _get_loop(self) -> asyncio.AbstractEventLoop:
+        """Get the cached event loop."""
+        if self._loop is None:
+            self._loop = asyncio.get_event_loop()
+        return self._loop
 
     async def start(self) -> None:
         """Start the ETW trace session.
@@ -84,7 +91,7 @@ class EtwStreamer:
             raise RuntimeError("Streamer is already running")
 
         # Start in thread pool to avoid blocking the event loop
-        loop = asyncio.get_event_loop()
+        loop = self._get_loop()
         await loop.run_in_executor(None, self._session.start)
         self._started = True
 
@@ -98,7 +105,7 @@ class EtwStreamer:
             raise RuntimeError("Streamer is not running")
 
         # Stop in thread pool to avoid blocking the event loop
-        loop = asyncio.get_event_loop()
+        loop = self._get_loop()
         await loop.run_in_executor(None, self._session.stop)
         self._started = False
 
@@ -145,12 +152,13 @@ class EtwStreamer:
             raise RuntimeError("Streamer is not running. Call start() first.")
 
         count = 0
-        start_time = asyncio.get_event_loop().time()
+        loop = self._get_loop()
+        start_time = loop.time()
 
         while max_events is None or count < max_events:
             # Check timeout
             if timeout is not None:
-                elapsed = asyncio.get_event_loop().time() - start_time
+                elapsed = loop.time() - start_time
                 if elapsed >= timeout:
                     break
 

@@ -7,14 +7,18 @@ for integration with modern observability platforms.
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 
 class ExportMode(Enum):
@@ -336,7 +340,7 @@ class OtlpFileExporter:
         return True
 
     def flush(self) -> bool:
-        """Flush spans to file.
+        """Flush spans to file with atomic write.
 
         Returns:
             True if flushed successfully.
@@ -345,8 +349,20 @@ class OtlpFileExporter:
             return True
 
         if self._format == OtlpFileFormat.JSON:
-            with open(self._output_path, "w") as f:
-                json.dump({"spans": self._spans}, f, indent=2)
+            try:
+                # Atomic write via temp file
+                output = Path(self._output_path)
+                temp_path = output.with_suffix(".tmp")
+                with open(temp_path, "w", encoding="utf-8") as f:
+                    json.dump({"spans": self._spans}, f, indent=2)
+                temp_path.replace(output)
+                self._spans.clear()
+            except OSError as e:
+                logger.error("Failed to write OTLP file %s: %s", self._output_path, e)
+                return False
+            except (TypeError, ValueError) as e:
+                logger.error("Failed to serialize spans: %s", e)
+                return False
 
         return True
 

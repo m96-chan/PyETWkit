@@ -6,7 +6,9 @@ recording, storing, and replaying ETW sessions.
 
 from __future__ import annotations
 
+import bisect
 import json
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -16,6 +18,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 
 class CompressionType(Enum):
@@ -311,19 +315,29 @@ class Player:
     def _load_file(self) -> None:
         """Load the .etwpack file."""
         if not self._input_path.exists():
+            logger.warning("etwpack file not found: %s", self._input_path)
             return
 
         try:
-            data = json.loads(self._input_path.read_text())
+            data = json.loads(self._input_path.read_text(encoding="utf-8"))
             self._header = EtwpackHeader.from_json(json.dumps(data["header"]))
             self._events = data.get("events", [])
             self.duration = self._header.duration_ms / 1000.0
             self.event_count = self._header.event_count
-        except (json.JSONDecodeError, KeyError):
-            pass
+            # Build timestamp index for binary search
+            self._timestamps = [e.get("timestamp", 0) for e in self._events]
+        except json.JSONDecodeError as e:
+            logger.warning("Invalid JSON in %s: %s", self._input_path, e)
+            self._events = []
+        except KeyError as e:
+            logger.warning("Missing key in etwpack file %s: %s", self._input_path, e)
+            self._events = []
+        except OSError as e:
+            logger.error("Failed to read %s: %s", self._input_path, e)
+            self._events = []
 
     def seek(self, timestamp: str | float | None = None, position: int | None = None) -> Player:
-        """Seek to a position in the recording.
+        """Seek to a position in the recording using binary search.
 
         Args:
             timestamp: Target timestamp (ISO format string or Unix timestamp).
@@ -334,13 +348,17 @@ class Player:
         """
         if position is not None:
             self._position = max(0, min(position, len(self._events)))
-        elif timestamp is not None:
-            # Find event closest to timestamp
+        elif timestamp is not None and self._events:
+            # Use binary search for O(log n) seeking
             target = float(timestamp) if isinstance(timestamp, (int, float)) else 0
-            for i, event in enumerate(self._events):
-                if event.get("timestamp", 0) >= target:
-                    self._position = i
-                    break
+            if hasattr(self, "_timestamps") and self._timestamps:
+                self._position = bisect.bisect_left(self._timestamps, target)
+            else:
+                # Fallback to linear search if timestamps not indexed
+                for i, event in enumerate(self._events):
+                    if event.get("timestamp", 0) >= target:
+                        self._position = i
+                        break
         return self
 
     def events(
