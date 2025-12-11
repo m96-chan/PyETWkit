@@ -25,18 +25,13 @@ use std::time::Duration;
 use uuid::Uuid;
 
 /// Trace mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TraceMode {
     /// Real-time trace (default)
+    #[default]
     RealTime,
     /// Read from ETL file
     File,
-}
-
-impl Default for TraceMode {
-    fn default() -> Self {
-        TraceMode::RealTime
-    }
 }
 
 /// Session configuration
@@ -108,8 +103,10 @@ pub struct EtwSession {
 impl EtwSession {
     /// Create a new session with default configuration
     pub fn new(name: impl Into<String>) -> Self {
-        let mut config = SessionConfig::default();
-        config.name = name.into();
+        let config = SessionConfig {
+            name: name.into(),
+            ..SessionConfig::default()
+        };
         Self::with_config(config)
     }
 

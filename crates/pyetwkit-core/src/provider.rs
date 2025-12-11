@@ -8,7 +8,7 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 /// Trace level for event filtering
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[repr(u8)]
 pub enum TraceLevel {
     /// Log always
@@ -22,13 +22,8 @@ pub enum TraceLevel {
     /// Informational
     Info = 4,
     /// Verbose/debug
+    #[default]
     Verbose = 5,
-}
-
-impl Default for TraceLevel {
-    fn default() -> Self {
-        TraceLevel::Verbose
-    }
 }
 
 impl From<u8> for TraceLevel {
