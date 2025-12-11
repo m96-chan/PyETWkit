@@ -56,6 +56,9 @@ except ImportError:
 
 # Import high-level Python APIs
 # v1.1: Enhanced APIs
+# Re-export KernelFlags and KernelSession from _core
+import contextlib
+
 from pyetwkit.async_api import AsyncEtwSession, EventBatcher, gather_events, stream_to_queue
 from pyetwkit.filtering import (
     EventFilter,
@@ -67,6 +70,19 @@ from pyetwkit.filtering import (
     provider_filter,
 )
 from pyetwkit.listener import EtwListener
+
+# v2.0: Manifest-based typed events
+from pyetwkit.manifest import (
+    EventDefinition,
+    FieldDefinition,
+    ManifestCache,
+    ManifestParser,
+    ProviderManifest,
+    TypedEventFactory,
+)
+
+# v2.0: Multi-session support
+from pyetwkit.multi_session import MultiSession
 from pyetwkit.providers import (
     FileProvider,
     KernelProvider,
@@ -74,6 +90,9 @@ from pyetwkit.providers import (
     ProcessProvider,
     RegistryProvider,
 )
+
+# v2.0: Rust-side filtering
+from pyetwkit.rust_filter import RustEventFilter
 from pyetwkit.streamer import EtwStreamer
 from pyetwkit.typed_events import (
     DnsQueryEvent,
@@ -88,6 +107,9 @@ from pyetwkit.typed_events import (
     TypedEvent,
     to_typed_event,
 )
+
+with contextlib.suppress(ImportError):
+    from pyetwkit._core import KernelFlags, KernelSession
 
 __all__ = [
     # Version info
@@ -134,6 +156,19 @@ __all__ = [
     "TcpConnectEvent",
     "TcpDisconnectEvent",
     "to_typed_event",
+    # v2.0: Multi-session
+    "MultiSession",
+    "KernelFlags",
+    "KernelSession",
+    # v2.0: Rust-side filtering
+    "RustEventFilter",
+    # v2.0: Manifest-based typed events
+    "ManifestParser",
+    "ProviderManifest",
+    "EventDefinition",
+    "FieldDefinition",
+    "TypedEventFactory",
+    "ManifestCache",
 ]
 
 
