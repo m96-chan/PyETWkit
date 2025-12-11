@@ -54,11 +54,14 @@ jobs:
           enable-cache: true
           cache-dependency-glob: ""
 
-      - name: Set up Python
-        run: uv python install 3.11
+      - name: Set up Python and venv
+        run: |
+          uv python install 3.11
+          uv venv --python 3.11
+          echo "$PWD/.venv/bin" >> $GITHUB_PATH
 
       - name: Install dependencies
-        run: uv pip install --system ruff black mypy
+        run: uv pip install ruff black mypy
 
       - name: Check formatting with black
         run: black --check src/ tests/ examples/
@@ -116,7 +119,9 @@ jobs:
           cache-dependency-glob: ""
 
       - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -135,11 +140,10 @@ jobs:
             ${{ runner.os }}-cargo-build-
 
       - name: Install maturin
-        run: uv pip install --system maturin
+        run: uv pip install maturin
 
       - name: Build wheel
-        run: maturin build --release --strip -i $(uv python find ${{ matrix.python-version }})
-        shell: bash
+        run: .venv\Scripts\maturin.exe build --release --strip
         continue-on-error: true  # v0.1.0: Rust compilation issues pending
 
       - name: Upload wheels
@@ -168,7 +172,9 @@ jobs:
           cache-dependency-glob: ""
 
       - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }}
 
       - name: Download wheels
         uses: actions/download-artifact@v4
@@ -179,10 +185,10 @@ jobs:
 
       - name: Install wheel and test dependencies
         run: |
-          uv pip install --system pytest pytest-asyncio pytest-cov
+          uv pip install pytest pytest-asyncio pytest-cov
           $wheel = Get-ChildItem dist/*.whl -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($wheel) {
-            uv pip install --system $wheel.FullName
+            uv pip install $wheel.FullName
           } else {
             Write-Warning "No wheel found, skipping install"
           }
@@ -190,7 +196,7 @@ jobs:
         continue-on-error: true
 
       - name: Run tests
-        run: pytest tests/ -v --cov=pyetwkit --cov-report=xml
+        run: .venv\Scripts\pytest.exe tests/ -v --cov=pyetwkit --cov-report=xml
         continue-on-error: true  # Some tests may require admin privileges
 
       - name: Upload coverage
