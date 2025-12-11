@@ -41,11 +41,11 @@ async def demo_typed_events():
 
     async with AsyncEtwSession() as session:
         # Add kernel process provider
-        from pyetwkit._core import PyKernelFlags, PyKernelSession
+        from pyetwkit._core import KernelSession
 
         # Use kernel session for process events
-        flags = PyKernelFlags().with_process()
-        kernel = PyKernelSession(flags)
+        kernel = KernelSession()
+        kernel.enable_process()
         kernel.start()
 
         try:

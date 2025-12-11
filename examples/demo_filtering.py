@@ -27,7 +27,7 @@ def demo_basic_filtering():
     print("Listening for 5 seconds...\n")
 
     session = EtwSession("FilterDemo1")
-    provider = EtwProvider("Microsoft-Windows-DNS-Client", "DNS-Client")
+    provider = EtwProvider("1c95126e-7eea-49a9-a3fe-a378b03ddb4d", "DNS-Client")
     provider = provider.with_level(5)
     session.add_provider(provider)
     session.start()
@@ -69,7 +69,7 @@ def demo_builder_api():
     print("\nListening for 5 seconds...\n")
 
     session = EtwSession("FilterDemo2")
-    provider = EtwProvider("Microsoft-Windows-DNS-Client", "DNS-Client")
+    provider = EtwProvider("1c95126e-7eea-49a9-a3fe-a378b03ddb4d", "DNS-Client")
     provider = provider.with_level(5)
     session.add_provider(provider)
     session.start()
@@ -100,7 +100,7 @@ def demo_property_filtering():
     print("\nListening for 10 seconds...\n")
 
     session = EtwSession("FilterDemo3")
-    provider = EtwProvider("Microsoft-Windows-DNS-Client", "DNS-Client")
+    provider = EtwProvider("1c95126e-7eea-49a9-a3fe-a378b03ddb4d", "DNS-Client")
     provider = provider.with_level(5)
     session.add_provider(provider)
     session.start()
@@ -135,7 +135,7 @@ def demo_combined_filters():
     print("Listening for 5 seconds...\n")
 
     session = EtwSession("FilterDemo4")
-    provider = EtwProvider("Microsoft-Windows-DNS-Client", "DNS-Client")
+    provider = EtwProvider("1c95126e-7eea-49a9-a3fe-a378b03ddb4d", "DNS-Client")
     provider = provider.with_level(5)
     session.add_provider(provider)
     session.start()
@@ -170,7 +170,7 @@ def demo_custom_predicate():
     print("Listening for 5 seconds...\n")
 
     session = EtwSession("FilterDemo5")
-    provider = EtwProvider("Microsoft-Windows-DNS-Client", "DNS-Client")
+    provider = EtwProvider("1c95126e-7eea-49a9-a3fe-a378b03ddb4d", "DNS-Client")
     provider = provider.with_level(5)
     session.add_provider(provider)
     session.start()

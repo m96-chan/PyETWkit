@@ -14,7 +14,7 @@ from pyetwkit import (
     TypedEvent,
     to_typed_event,
 )
-from pyetwkit._core import PyKernelFlags, PyKernelSession
+from pyetwkit._core import KernelFlags, KernelSession
 
 
 def demo_process_events():
@@ -22,8 +22,10 @@ def demo_process_events():
     print("=== Typed Process Events ===")
     print("Monitoring for 15 seconds... Start/stop programs to see events.\n")
 
-    flags = PyKernelFlags().with_process().with_thread().with_image_load()
-    session = PyKernelSession(flags)
+    session = KernelSession()
+    session.enable_process()
+    session.enable_thread()
+    session.enable_image_load()
     session.start()
 
     try:
@@ -74,7 +76,8 @@ def demo_process_events():
         print(f"Image loads: {image_loads}")
 
     finally:
-        session.stop()
+        if session.is_running():
+            session.stop()
 
 
 def demo_typed_event_dict():
