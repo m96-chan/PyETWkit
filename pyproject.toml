@@ -52,6 +52,9 @@ docs = [
     "sphinx-autodoc-typehints>=2.0",
     "myst-parser>=3.0",
 ]
+dashboard = [
+    "gradio>=4.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/m96-chan/PyETWkit"
