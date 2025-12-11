@@ -372,10 +372,17 @@ def event_to_span(
     """
     event_id = getattr(event, "event_id", 0)
     provider_name = getattr(event, "provider_name", "unknown")
-    timestamp = getattr(event, "timestamp", time.time())
+    raw_timestamp = getattr(event, "timestamp", time.time())
     process_id = getattr(event, "process_id", 0)
     thread_id = getattr(event, "thread_id", 0)
     properties = getattr(event, "properties", {})
+
+    # Convert timestamp to float (seconds since epoch)
+    if hasattr(raw_timestamp, "timestamp"):
+        # datetime object
+        timestamp = raw_timestamp.timestamp()
+    else:
+        timestamp = float(raw_timestamp)
 
     return {
         "traceId": uuid.uuid4().hex,
@@ -411,9 +418,16 @@ def event_to_log(
     """
     event_id = getattr(event, "event_id", 0)
     provider_name = getattr(event, "provider_name", "unknown")
-    timestamp = getattr(event, "timestamp", time.time())
+    raw_timestamp = getattr(event, "timestamp", time.time())
     process_id = getattr(event, "process_id", 0)
     properties = getattr(event, "properties", {})
+
+    # Convert timestamp to float (seconds since epoch)
+    if hasattr(raw_timestamp, "timestamp"):
+        # datetime object
+        timestamp = raw_timestamp.timestamp()
+    else:
+        timestamp = float(raw_timestamp)
 
     return {
         "timeUnixNano": int(timestamp * 1e9),

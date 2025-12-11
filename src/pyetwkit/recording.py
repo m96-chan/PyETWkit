@@ -250,13 +250,19 @@ class Recorder:
 
         # For now, write a simple JSON format
         # In production, would use proper binary format with compression
+        def serialize_timestamp(ts: Any) -> str | float | int:
+            """Convert timestamp to JSON-serializable format."""
+            if hasattr(ts, "isoformat"):
+                return ts.isoformat()
+            return ts
+
         data = {
             "header": json.loads(header.to_json()),
             "events": [
                 {
                     "event_id": getattr(e, "event_id", 0),
                     "provider_name": getattr(e, "provider_name", ""),
-                    "timestamp": getattr(e, "timestamp", 0),
+                    "timestamp": serialize_timestamp(getattr(e, "timestamp", 0)),
                     "process_id": getattr(e, "process_id", 0),
                     "properties": getattr(e, "properties", {}),
                 }
