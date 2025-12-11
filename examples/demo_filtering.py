@@ -85,11 +85,7 @@ def demo_property_filtering():
     print("\n=== Property Filtering ===")
 
     # This filter would match events where QueryName contains "google"
-    filter = (
-        EventFilterBuilder()
-        .property_contains("QueryName", "example")
-        .build()
-    )
+    filter = EventFilterBuilder().property_contains("QueryName", "example").build()
 
     print("Filter: QueryName contains 'example'")
     print("Tip: Run 'ping example.com' to generate matching events")
@@ -153,12 +149,7 @@ def demo_custom_predicate():
         # Only events from processes with even PIDs
         return event.process_id % 2 == 0
 
-    filter = (
-        EventFilterBuilder()
-        .custom(my_filter)
-        .level_max(4)
-        .build()
-    )
+    filter = EventFilterBuilder().custom(my_filter).level_max(4).build()
 
     print("Filter: Even PID AND level <= 4")
     print("Listening for 5 seconds...\n")
@@ -237,6 +228,7 @@ def main():
     except Exception as e:
         print(f"\nError: {e}")
         import traceback
+
         traceback.print_exc()
 
 

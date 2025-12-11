@@ -118,6 +118,7 @@ def demo_custom_typed_event():
     @dataclass
     class MyCustomEvent(TypedEvent):
         """Custom event for a specific provider."""
+
         PROVIDER_NAME: ClassVar[str] = "My-Custom-Provider"
         EVENT_ID: ClassVar[int] = 100
         EVENT_NAME: ClassVar[str] = "CustomEvent"
@@ -170,6 +171,7 @@ def main():
     except Exception as e:
         print(f"\nError: {e}")
         import traceback
+
         traceback.print_exc()
 
 

@@ -67,11 +67,7 @@ async def demo_filtering():
     print("Filtering DNS events by level...\n")
 
     # Build a filter
-    event_filter = (
-        EventFilterBuilder()
-        .level_max(4)  # Info and above only
-        .build()
-    )
+    event_filter = EventFilterBuilder().level_max(4).build()  # Info and above only
 
     async with AsyncEtwSession() as session:
         session.add_provider("Microsoft-Windows-DNS-Client", level=5)

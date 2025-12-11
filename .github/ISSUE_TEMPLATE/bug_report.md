@@ -60,4 +60,3 @@ def test_bug_fix():
 ```
 
 ## Additional Context
-
