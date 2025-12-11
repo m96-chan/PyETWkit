@@ -185,9 +185,12 @@ jobs:
 
       - name: Run tests
         run: |
-          # Run from temp dir to avoid importing src/pyetwkit instead of installed wheel
-          cd $env:TEMP
-          & "$env:GITHUB_WORKSPACE\.venv\Scripts\pytest.exe" "$env:GITHUB_WORKSPACE\tests" -v --cov=pyetwkit --cov-report=xml
+          # Copy tests to temp dir to avoid importing src/pyetwkit instead of installed wheel
+          $testDir = Join-Path $env:TEMP "pyetwkit_tests"
+          if (Test-Path $testDir) { Remove-Item -Recurse -Force $testDir }
+          Copy-Item -Recurse "$env:GITHUB_WORKSPACE\tests" $testDir
+          cd $testDir
+          & "$env:GITHUB_WORKSPACE\.venv\Scripts\pytest.exe" . -v --cov=pyetwkit --cov-report=xml
         shell: pwsh
 
       - name: Upload coverage
