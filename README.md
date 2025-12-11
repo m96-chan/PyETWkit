@@ -179,9 +179,9 @@ Windows ETW subsystem
 ### Planned
 
 #### v1.1 - Enhanced Core
-- [ ] Async streaming API
-- [ ] Manifest-based typed events
-- [ ] Real-time event filtering callbacks
+- [ ] [Async streaming API](https://github.com/m96-chan/PyETWkit/issues/54)
+- [ ] [Manifest-based typed events](https://github.com/m96-chan/PyETWkit/issues/55)
+- [ ] [Real-time event filtering callbacks](https://github.com/m96-chan/PyETWkit/issues/56)
 
 #### v2.0 - Enterprise Features
 - [ ] [Multi-session / Multi-provider concurrent subscription](https://github.com/m96-chan/PyETWkit/issues/48)
