@@ -10,8 +10,6 @@ from pyetwkit import (
     EventFilterBuilder,
     event_id_filter,
     level_filter,
-    process_filter,
-    property_filter,
 )
 from pyetwkit._core import EtwProvider, EtwSession
 

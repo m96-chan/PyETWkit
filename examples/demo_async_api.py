@@ -39,28 +39,26 @@ async def demo_typed_events():
     print("Monitoring process events for 10 seconds...\n")
     print("Try starting/stopping programs to see events.\n")
 
-    async with AsyncEtwSession() as session:
-        # Add kernel process provider
-        from pyetwkit._core import KernelSession
+    # Use kernel session for process events (not AsyncEtwSession)
+    from pyetwkit._core import KernelSession
 
-        # Use kernel session for process events
-        kernel = KernelSession()
-        kernel.enable_process()
-        kernel.start()
+    kernel = KernelSession()
+    kernel.enable_process()
+    kernel.start()
 
-        try:
-            for _ in range(50):  # Check up to 50 times
-                event = kernel.next_event_timeout(200)
-                if event:
-                    typed = to_typed_event(event)
-                    if isinstance(typed, ProcessStartEvent):
-                        print(f"[PROCESS START] {typed.image_file_name}")
-                        print(f"  PID: {typed.process_id}")
-                        print(f"  Command: {typed.command_line[:60]}...")
-                    else:
-                        print(f"[{typed.EVENT_NAME or 'Event'}] ID={typed.event_id}")
-        finally:
-            kernel.stop()
+    try:
+        for _ in range(50):  # Check up to 50 times
+            event = kernel.next_event_timeout(200)
+            if event:
+                typed = to_typed_event(event)
+                if isinstance(typed, ProcessStartEvent):
+                    print(f"[PROCESS START] {typed.image_file_name}")
+                    print(f"  PID: {typed.process_id}")
+                    print(f"  Command: {typed.command_line[:60]}...")
+                else:
+                    print(f"[{typed.EVENT_NAME or 'Event'}] ID={typed.event_id}")
+    finally:
+        kernel.stop()
 
 
 async def demo_filtering():

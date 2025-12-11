@@ -55,16 +55,6 @@ except ImportError:
         )
 
 # Import high-level Python APIs
-from pyetwkit.listener import EtwListener
-from pyetwkit.providers import (
-    FileProvider,
-    KernelProvider,
-    NetworkProvider,
-    ProcessProvider,
-    RegistryProvider,
-)
-from pyetwkit.streamer import EtwStreamer
-
 # v1.1: Enhanced APIs
 from pyetwkit.async_api import AsyncEtwSession, EventBatcher, gather_events, stream_to_queue
 from pyetwkit.filtering import (
@@ -76,6 +66,15 @@ from pyetwkit.filtering import (
     property_filter,
     provider_filter,
 )
+from pyetwkit.listener import EtwListener
+from pyetwkit.providers import (
+    FileProvider,
+    KernelProvider,
+    NetworkProvider,
+    ProcessProvider,
+    RegistryProvider,
+)
+from pyetwkit.streamer import EtwStreamer
 from pyetwkit.typed_events import (
     DnsQueryEvent,
     DnsResponseEvent,

@@ -11,7 +11,7 @@ including:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
@@ -64,14 +64,14 @@ class AsyncEtwSession:
         provider: EtwProvider | str,
         *,
         level: int = 4,
-        keywords: int = 0xFFFFFFFFFFFFFFFF,
+        _keywords: int = 0xFFFFFFFFFFFFFFFF,  # Reserved for future use
     ) -> AsyncEtwSession:
         """Add a provider to the session.
 
         Args:
             provider: EtwProvider instance or provider name/GUID string
             level: Trace level (1=Critical to 5=Verbose)
-            keywords: Event keywords to enable
+            _keywords: Reserved for future use (event keywords to enable)
 
         Returns:
             Self for method chaining
@@ -159,10 +159,7 @@ class AsyncEtwSession:
 
     def _should_process(self, event: EtwEvent) -> bool:
         """Check if event passes all filters."""
-        for predicate in self._filter_callbacks:
-            if not predicate(event):
-                return False
-        return True
+        return all(predicate(event) for predicate in self._filter_callbacks)
 
     async def _process_callbacks(self, event: EtwEvent) -> None:
         """Process all registered callbacks for an event."""

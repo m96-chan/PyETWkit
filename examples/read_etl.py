@@ -48,9 +48,9 @@ def main():
             for key, value in list(props.items())[:3]:
                 print(f"  {key}: {value}")
 
-    print(f"\n=== Summary ===")
+    print("\n=== Summary ===")
     print(f"Total events: {event_count}")
-    print(f"\nEvents by provider:")
+    print("\nEvents by provider:")
     for provider, count in sorted(provider_stats.items(), key=lambda x: -x[1]):
         print(f"  {provider}: {count}")
 

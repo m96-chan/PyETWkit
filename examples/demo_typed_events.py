@@ -7,14 +7,14 @@ Run as administrator.
 """
 
 from pyetwkit import (
+    ImageLoadEvent,
     ProcessStartEvent,
     ProcessStopEvent,
     ThreadStartEvent,
-    ImageLoadEvent,
     TypedEvent,
     to_typed_event,
 )
-from pyetwkit._core import KernelFlags, KernelSession
+from pyetwkit._core import KernelSession
 
 
 def demo_process_events():
@@ -44,7 +44,7 @@ def demo_process_events():
 
             if isinstance(typed, ProcessStartEvent):
                 process_starts += 1
-                print(f"[PROCESS START]")
+                print("[PROCESS START]")
                 print(f"  PID: {typed.process_id}")
                 print(f"  Image: {typed.image_file_name}")
                 print(f"  Parent PID: {typed.parent_process_id}")
@@ -69,7 +69,7 @@ def demo_process_events():
                 if image_loads <= 10 and typed.image_name:
                     print(f"[IMAGE LOAD] {typed.image_name}")
 
-        print(f"\n=== Summary ===")
+        print("\n=== Summary ===")
         print(f"Process starts: {process_starts}")
         print(f"Process stops: {process_stops}")
         print(f"Thread starts: {thread_starts}")
@@ -112,6 +112,7 @@ def demo_custom_typed_event():
 
     from dataclasses import dataclass
     from typing import ClassVar
+
     from pyetwkit.typed_events import register_event_type
 
     @dataclass
