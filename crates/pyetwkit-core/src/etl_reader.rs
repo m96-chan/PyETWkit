@@ -106,10 +106,8 @@ impl Iterator for EtlReader {
 
     fn next(&mut self) -> Option<Self::Item> {
         // Start if not already started
-        if self.receiver.is_none() {
-            if self.start().is_err() {
-                return None;
-            }
+        if self.receiver.is_none() && self.start().is_err() {
+            return None;
         }
         self.next_event()
     }
@@ -157,9 +155,7 @@ impl PyEtlReader {
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("Reader is closed"))?;
 
         if !self.started {
-            reader
-                .start()
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+            reader.start()?;
             self.started = true;
         }
 

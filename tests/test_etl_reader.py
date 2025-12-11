@@ -1,5 +1,7 @@
 """Tests for ETL file reading functionality (v0.2.0 - #25)."""
 
+from __future__ import annotations
+
 import os
 import tempfile
 from pathlib import Path

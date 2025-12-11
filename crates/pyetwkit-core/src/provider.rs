@@ -8,7 +8,7 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 /// Trace level for event filtering
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[repr(u8)]
 pub enum TraceLevel {
     /// Log always
@@ -22,13 +22,8 @@ pub enum TraceLevel {
     /// Informational
     Info = 4,
     /// Verbose/debug
+    #[default]
     Verbose = 5,
-}
-
-impl Default for TraceLevel {
-    fn default() -> Self {
-        TraceLevel::Verbose
-    }
 }
 
 impl From<u8> for TraceLevel {
@@ -370,7 +365,9 @@ mod tests {
 
     #[test]
     fn test_matches_event_level() {
-        let provider = EtwProvider::by_guid(Uuid::new_v4()).with_level(TraceLevel::Warning);
+        let provider = EtwProvider::by_guid(Uuid::new_v4())
+            .with_level(TraceLevel::Warning)
+            .with_keywords_any(0); // Disable keywords filter for this test
 
         // Should match: level <= Warning (3)
         assert!(provider.matches_event(1, 0, 1, 0)); // Critical

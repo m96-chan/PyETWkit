@@ -334,7 +334,7 @@ impl PyEtwEvent {
         self.inner
             .stack_trace
             .as_ref()
-            .map(|trace| PyList::new_bound(py, trace.iter().map(|&addr| addr)).into())
+            .map(|trace| PyList::new_bound(py, trace.iter().copied()).into())
     }
 
     /// Convert to JSON string

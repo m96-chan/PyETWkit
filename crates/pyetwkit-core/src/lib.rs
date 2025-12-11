@@ -7,6 +7,12 @@
 //! - Provider discovery and enumeration
 //! - Python bindings via pyo3
 
+// pyo3 macros generate code that triggers this clippy lint for PyResult<T> returns
+// when impl From<CustomError> for PyErr is defined. This is a known issue with
+// pyo3's generated code and not a real problem in our code.
+// See: https://github.com/PyO3/pyo3/issues/3370
+#![allow(clippy::useless_conversion)]
+
 pub mod discovery;
 pub mod error;
 pub mod etl_reader;

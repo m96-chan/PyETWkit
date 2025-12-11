@@ -40,7 +40,6 @@ jobs:
 
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
-        continue-on-error: true  # v0.1.0: ferrisetw API changes pending
 
   lint-python:
     name: Lint Python
@@ -48,21 +47,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
         with:
-          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: ""
+
+      - name: Set up Python and venv
+        run: |
+          uv python install 3.11
+          uv venv --python 3.11
+          echo "$PWD/.venv/bin" >> $GITHUB_PATH
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install ruff black mypy
+        run: uv pip install ruff black mypy
 
       - name: Check formatting with black
-        run: black --check src/ tests/
+        run: black --check src/ tests/ examples/
 
       - name: Lint with ruff
-        run: ruff check src/ tests/
+        run: ruff check src/ tests/ examples/
 
       - name: Type check with mypy
         run: mypy src/pyetwkit --ignore-missing-imports --exclude '_stubs\.py$'
@@ -92,13 +96,10 @@ jobs:
 
       - name: Run tests
         run: cargo test --all-features --verbose
-        continue-on-error: true  # v0.1.0: ferrisetw/pyo3 API updates pending
 
   build-wheels:
     name: Build wheels
     runs-on: windows-latest
-    # Allow build even if lint/test has errors (continue-on-error)
-    if: always()
     needs: [lint-rust, lint-python, test-rust]
     strategy:
       fail-fast: false
@@ -107,20 +108,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
         with:
-          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: ""
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-
+
       - name: Install maturin
-        run: pip install maturin
+        run: uv pip install maturin
 
       - name: Build wheel
-        run: maturin build --release --strip
-        continue-on-error: true  # v0.1.0: Rust compilation issues pending
+        run: .venv\Scripts\maturin.exe build --release --strip -m crates/pyetwkit-core/Cargo.toml
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -132,7 +151,6 @@ jobs:
   test-python:
     name: Test Python
     runs-on: windows-latest
-    if: always()
     needs: build-wheels
     strategy:
       fail-fast: false
@@ -141,33 +159,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
         with:
-          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: ""
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: |
+          uv python install ${{ matrix.python-version }}
+          uv venv --python ${{ matrix.python-version }}
 
       - name: Download wheels
         uses: actions/download-artifact@v4
-        continue-on-error: true
         with:
           name: wheels-${{ matrix.python-version }}
           path: dist/
 
       - name: Install wheel and test dependencies
         run: |
-          pip install pytest pytest-asyncio pytest-cov
-          $wheel = Get-ChildItem dist/*.whl -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($wheel) {
-            pip install $wheel.FullName
-          } else {
-            Write-Warning "No wheel found, skipping install"
-          }
+          uv pip install pytest pytest-asyncio pytest-cov
+          $wheel = Get-ChildItem dist/*.whl | Select-Object -First 1
+          uv pip install $wheel.FullName
         shell: pwsh
-        continue-on-error: true
 
       - name: Run tests
-        run: pytest tests/ -v --cov=pyetwkit --cov-report=xml
-        continue-on-error: true  # Some tests may require admin privileges
+        run: |
+          # Copy tests to temp dir to avoid importing src/pyetwkit instead of installed wheel
+          $testDir = Join-Path $env:TEMP "pyetwkit_tests"
+          if (Test-Path $testDir) { Remove-Item -Recurse -Force $testDir }
+          Copy-Item -Recurse "$env:GITHUB_WORKSPACE\tests" $testDir
+          cd $testDir
+          & "$env:GITHUB_WORKSPACE\.venv\Scripts\pytest.exe" . -v --cov=pyetwkit --cov-report=xml
+        shell: pwsh
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4

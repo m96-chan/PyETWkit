@@ -30,8 +30,12 @@ def main():
     session = EtwSession("PyETWkitProfileExample")
 
     for pc in network_profile.providers:
-        provider = EtwProvider(pc.guid or pc.name, pc.name)
-        provider = provider.with_level(4)
+        if pc.guid:
+            provider = EtwProvider(pc.guid, pc.name).level(4)
+        else:
+            # Skip providers without GUID
+            print(f"Skipped (no GUID): {pc.name}")
+            continue
         session.add_provider(provider)
         print(f"Added provider: {pc.name}")
 

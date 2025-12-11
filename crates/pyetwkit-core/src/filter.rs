@@ -66,7 +66,7 @@ impl EventFilter {
         match self {
             EventFilter::ProcessId(filter_pid) => *filter_pid == pid,
             EventFilter::ProcessName(name) => {
-                process_name.map_or(false, |pn| pn.to_lowercase().contains(&name.to_lowercase()))
+                process_name.is_some_and(|pn| pn.to_lowercase().contains(&name.to_lowercase()))
             }
             _ => true,
         }
