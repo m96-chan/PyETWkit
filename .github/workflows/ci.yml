@@ -40,7 +40,6 @@ jobs:
 
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
-        continue-on-error: true  # v0.1.0: ferrisetw API changes pending
 
   lint-python:
     name: Lint Python
@@ -97,13 +96,10 @@ jobs:
 
       - name: Run tests
         run: cargo test --all-features --verbose
-        continue-on-error: true  # v0.1.0: ferrisetw/pyo3 API updates pending
 
   build-wheels:
     name: Build wheels
     runs-on: windows-latest
-    # Allow build even if lint/test has errors (continue-on-error)
-    if: always()
     needs: [lint-rust, lint-python, test-rust]
     strategy:
       fail-fast: false
@@ -144,7 +140,6 @@ jobs:
 
       - name: Build wheel
         run: .venv\Scripts\maturin.exe build --release --strip -m crates/pyetwkit-core/Cargo.toml
-        continue-on-error: true  # v0.1.0: Rust compilation issues pending
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -156,7 +151,6 @@ jobs:
   test-python:
     name: Test Python
     runs-on: windows-latest
-    if: always()
     needs: build-wheels
     strategy:
       fail-fast: false
@@ -178,7 +172,6 @@ jobs:
 
       - name: Download wheels
         uses: actions/download-artifact@v4
-        continue-on-error: true
         with:
           name: wheels-${{ matrix.python-version }}
           path: dist/
@@ -186,18 +179,16 @@ jobs:
       - name: Install wheel and test dependencies
         run: |
           uv pip install pytest pytest-asyncio pytest-cov
-          $wheel = Get-ChildItem dist/*.whl -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($wheel) {
-            uv pip install $wheel.FullName
-          } else {
-            Write-Warning "No wheel found, skipping install"
-          }
+          $wheel = Get-ChildItem dist/*.whl | Select-Object -First 1
+          uv pip install $wheel.FullName
         shell: pwsh
-        continue-on-error: true
 
       - name: Run tests
-        run: .venv\Scripts\pytest.exe tests/ -v --cov=pyetwkit --cov-report=xml
-        continue-on-error: true  # Some tests may require admin privileges
+        run: |
+          # Run from temp dir to avoid importing src/pyetwkit instead of installed wheel
+          cd $env:TEMP
+          & "$env:GITHUB_WORKSPACE\.venv\Scripts\pytest.exe" "$env:GITHUB_WORKSPACE\tests" -v --cov=pyetwkit --cov-report=xml
+        shell: pwsh
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4

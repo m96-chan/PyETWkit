@@ -145,6 +145,8 @@ mod tests {
     fn test_error_conversion_to_pyerr() {
         let err = EtwError::PermissionDenied;
         let py_err: PyErr = err.into();
-        assert!(py_err.is_instance_of::<PyOSError>(pyo3::Python::with_gil(|py| py)));
+        pyo3::Python::with_gil(|py| {
+            assert!(py_err.is_instance_of::<PyOSError>(py));
+        });
     }
 }
