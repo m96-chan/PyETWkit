@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "pyetwkit"
-version = "2.0.0"
+version = "3.0.0"
 description = "High-performance ETW (Event Tracing for Windows) consumer library for Python"
 readme = "README.md"
 license = { text = "MIT" }

@@ -11,17 +11,29 @@ A modern, high-performance ETW (Event Tracing for Windows) toolkit for Python, p
 
 ## Features
 
+### Core
 - **Real-time ETW streaming** with sync API
 - **Kernel providers**: process, thread, registry, file, disk, network
 - **User providers**: DNS, Audio, and more via profiles
-- **Filtering**: by provider, event ID, trace level
 - **ETL file reading**: Parse existing trace logs
-- **Export**: CSV, JSON, JSONL, Parquet, Arrow formats
-- **CLI tool**: `pyetwkit` command for quick monitoring
-- **Provider discovery**: Search and list available providers
-- **Pre-configured profiles**: Audio, network, security scenarios
 - **Rust backend (pyo3)**: High throughput, zero-copy event delivery
 - Windows 10 / 11 / Server supported
+
+### v2.0 - Enterprise Features
+- **Multi-session support**: Run multiple ETW sessions simultaneously
+- **Manifest-based typed events**: Parse ETW manifests for structured event data
+- **Rust-side filtering**: High-performance event filtering in Rust
+- **Provider discovery**: Search and list available providers
+- **Pre-configured profiles**: Audio, network, security scenarios
+
+### v3.0 - Advanced Analysis
+- **Live Dashboard**: Browser-based real-time visualization with Gradio
+- **Event Correlation Engine**: Auto-correlate events by PID/TID/Handle
+- **Recording & Replay**: Capture and replay ETW sessions (.etwpack format)
+- **OpenTelemetry Exporter**: Export events to OTLP (Jaeger, Grafana, Datadog)
+
+### Export Formats
+- CSV, JSON, JSONL, Parquet, Arrow
 
 ---
 
@@ -29,6 +41,12 @@ A modern, high-performance ETW (Event Tracing for Windows) toolkit for Python, p
 
 ```bash
 pip install pyetwkit
+
+# Optional: Dashboard support
+pip install pyetwkit[dashboard]
+
+# Optional: Export to Parquet/Arrow
+pip install pyetwkit[export]
 ```
 
 ---
@@ -48,6 +66,10 @@ pyetwkit profiles
 # Listen to events (requires admin)
 pyetwkit listen Microsoft-Windows-DNS-Client
 pyetwkit listen --profile network
+
+# Launch live dashboard (requires admin)
+pyetwkit dashboard Microsoft-Windows-Kernel-Process
+pyetwkit dashboard --profile network --port 8080
 
 # Export ETL file
 pyetwkit export trace.etl -o events.csv
@@ -82,6 +104,94 @@ except KeyboardInterrupt:
     pass
 finally:
     session.stop()
+```
+
+### Live Dashboard
+
+```python
+from pyetwkit import Dashboard
+
+# Create and launch dashboard
+dashboard = Dashboard(port=7860)
+dashboard.add_provider("Microsoft-Windows-Kernel-Process")
+dashboard.add_provider("Microsoft-Windows-DNS-Client")
+
+# Opens browser at http://localhost:7860
+dashboard.launch()
+```
+
+### Event Correlation
+
+```python
+from pyetwkit import CorrelationEngine
+
+# Create correlation engine
+engine = CorrelationEngine()
+engine.add_provider("Microsoft-Windows-Kernel-Process")
+engine.add_provider("Microsoft-Windows-Kernel-Network")
+
+# Add events from your ETW session
+for event in events:
+    engine.add_event(event)
+
+# Correlate events by process ID
+correlated = engine.correlate_by_pid(1234)
+for event in correlated:
+    print(f"Event {event.event_id} from {event.provider_name}")
+
+# Export to timeline JSON
+timeline = engine.to_timeline_json(pid=1234)
+```
+
+### Recording & Replay
+
+```python
+from pyetwkit import Recorder, Player, CompressionType, RecorderConfig
+
+# Record events
+config = RecorderConfig(compression=CompressionType.ZSTD)
+recorder = Recorder("session.etwpack", config=config)
+recorder.add_provider("Microsoft-Windows-DNS-Client")
+recorder.start()
+
+# ... capture events ...
+recorder.stop()
+
+# Replay events
+player = Player("session.etwpack")
+print(f"Duration: {player.duration:.2f}s, Events: {player.event_count}")
+
+for event in player.events():
+    print(f"Event {event['event_id']}")
+```
+
+### OpenTelemetry Export
+
+```python
+from pyetwkit import OtlpExporter, SpanMapper
+
+# Configure exporter
+exporter = OtlpExporter(
+    endpoint="http://collector:4317",
+    service_name="my-service",
+    resource_attributes={
+        "deployment.environment": "production",
+    },
+)
+
+# Map ETW events to spans
+mapper = SpanMapper()
+mapper.add_rule(
+    provider="Microsoft-Windows-Kernel-Process",
+    event_id=1,
+    span_name="process.start",
+    attributes=["ProcessId", "ImageFileName"],
+)
+
+# Export events
+for event in events:
+    exporter.export(event)
+exporter.flush()
 ```
 
 ### Kernel Tracing
@@ -160,49 +270,27 @@ Windows ETW subsystem
 
 ---
 
-## Roadmap
+## Changelog
 
-### Completed
+### v3.0.0 (2024-12)
+- **Live Dashboard**: Gradio-based real-time UI (`pyetwkit dashboard` CLI)
+- **Event Correlation Engine**: Link events by PID/TID/Handle with timeline export
+- **Recording & Replay**: Capture sessions to `.etwpack` format with compression
+- **OpenTelemetry Exporter**: Export to OTLP endpoints (Jaeger, Grafana, etc.)
 
-- [x] Rust ETW consumer (ferrisetw backend)
-- [x] Provider discovery and enumeration
-- [x] User-mode ETW sessions
-- [x] Kernel-mode tracing (process, thread, image load)
-- [x] Event schema and property parsing
-- [x] ETL file reading
-- [x] Export to CSV, JSON, JSONL, Parquet, Arrow
-- [x] CLI tool (`pyetwkit` command)
-- [x] Provider profiles (audio, network, security)
-- [x] Stack trace capture support
-- [x] Session statistics
+### v2.0.0 (2024-12)
+- **Multi-session support**: Run multiple ETW sessions simultaneously
+- **Manifest-based typed events**: Parse ETW provider manifests
+- **Rust-side filtering**: High-performance filtering with `RustEventFilter`
+- **Enhanced CLI**: Provider profiles, export options
 
-### Planned
-
-#### v1.1 - Enhanced Core
-- [ ] [Async streaming API](https://github.com/m96-chan/PyETWkit/issues/54)
-- [ ] [Manifest-based typed events](https://github.com/m96-chan/PyETWkit/issues/55)
-- [ ] [Real-time event filtering callbacks](https://github.com/m96-chan/PyETWkit/issues/56)
-
-#### v2.0 - Enterprise Features
-- [ ] [Multi-session / Multi-provider concurrent subscription](https://github.com/m96-chan/PyETWkit/issues/48)
-  - Kernel + User + Custom providers simultaneously
-  - Unified event stream delivery
-- [ ] [OpenTelemetry (OTLP) Exporter](https://github.com/m96-chan/PyETWkit/issues/52)
-  - Integration with Jaeger, Grafana, Datadog
-  - Enterprise observability standard
-- [ ] [ETW Recording & Replay (.etwpack)](https://github.com/m96-chan/PyETWkit/issues/51)
-  - Python-optimized capture format
-  - Faster than native ETL files
-
-#### v3.0 - Advanced Analysis
-- [ ] [Event Correlation Engine](https://github.com/m96-chan/PyETWkit/issues/50)
-  - Auto-correlate by PID/TID/Handle
-  - Unified activity timelines
-  - "Wireshark for ETW" level insight
-- [ ] [Live Dashboard with WebSocket UI](https://github.com/m96-chan/PyETWkit/issues/49)
-  - Browser-based real-time visualization
-  - CPU, Network, Disk, Audio monitoring
-  - VRChat/Unity/OBS support
+### v1.0.0 (2024-12)
+- Initial release
+- Real-time ETW streaming
+- Kernel and user-mode providers
+- ETL file reading
+- Export to CSV, JSON, JSONL, Parquet, Arrow
+- CLI tool with provider discovery
 
 ---
 
@@ -216,6 +304,8 @@ See the [examples/](examples/) directory for complete sample scripts:
 - `provider_discovery.py` - Find ETW providers
 - `profiles.py` - Use pre-configured profiles
 - `read_etl.py` - Read ETL files
+- `demo_v2_features.py` - v2.0 features demo
+- `demo_v3_features.py` - v3.0 features demo
 
 ---
 
