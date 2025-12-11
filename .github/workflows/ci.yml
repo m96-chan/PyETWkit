@@ -139,7 +139,11 @@ jobs:
         run: uv pip install maturin
 
       - name: Build wheel
-        run: .venv\Scripts\maturin.exe build --release --strip -m crates/pyetwkit-core/Cargo.toml
+        run: |
+          # Clean any old wheels to ensure only the current version is uploaded
+          if (Test-Path target/wheels) { Remove-Item -Recurse -Force target/wheels }
+          .venv\Scripts\maturin.exe build --release --strip -m crates/pyetwkit-core/Cargo.toml
+        shell: pwsh
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -184,8 +188,8 @@ jobs:
           # Get Python minor version for matching wheel (use venv Python)
           $pyVer = & .\.venv\Scripts\python.exe -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')"
           Write-Host "Looking for wheel matching Python version: $pyVer"
-          # Install the wheel matching this Python version
-          $wheel = Get-ChildItem dist/*.whl | Where-Object { $_.Name -match $pyVer } | Select-Object -First 1
+          # Install the wheel matching this Python version (sort descending to get latest version)
+          $wheel = Get-ChildItem dist/*.whl | Where-Object { $_.Name -match $pyVer } | Sort-Object Name -Descending | Select-Object -First 1
           if ($wheel -eq $null) {
             Write-Host "ERROR: No wheel found for $pyVer"
             exit 1
