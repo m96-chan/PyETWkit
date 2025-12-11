@@ -178,11 +178,31 @@ Windows ETW subsystem
 
 ### Planned
 
+#### v1.1 - Enhanced Core
 - [ ] Async streaming API
 - [ ] Manifest-based typed events
 - [ ] Real-time event filtering callbacks
-- [ ] Event aggregation and analytics
-- [ ] Live TUI viewer
+
+#### v2.0 - Enterprise Features
+- [ ] [Multi-session / Multi-provider concurrent subscription](https://github.com/m96-chan/PyETWkit/issues/48)
+  - Kernel + User + Custom providers simultaneously
+  - Unified event stream delivery
+- [ ] [OpenTelemetry (OTLP) Exporter](https://github.com/m96-chan/PyETWkit/issues/52)
+  - Integration with Jaeger, Grafana, Datadog
+  - Enterprise observability standard
+- [ ] [ETW Recording & Replay (.etwpack)](https://github.com/m96-chan/PyETWkit/issues/51)
+  - Python-optimized capture format
+  - Faster than native ETL files
+
+#### v3.0 - Advanced Analysis
+- [ ] [Event Correlation Engine](https://github.com/m96-chan/PyETWkit/issues/50)
+  - Auto-correlate by PID/TID/Handle
+  - Unified activity timelines
+  - "Wireshark for ETW" level insight
+- [ ] [Live Dashboard with WebSocket UI](https://github.com/m96-chan/PyETWkit/issues/49)
+  - Browser-based real-time visualization
+  - CPU, Network, Disk, Audio monitoring
+  - VRChat/Unity/OBS support
 
 ---
 
