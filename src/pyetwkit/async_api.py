@@ -183,9 +183,12 @@ class AsyncEtwSession:
 
         Yields:
             EtwEvent objects
+
+        Note:
+            Auto-starts the session if not already started.
         """
         if not self._started:
-            raise RuntimeError("Session not started")
+            await self.start()
 
         count = 0
         start_time = asyncio.get_event_loop().time()
@@ -240,8 +243,11 @@ class AsyncEtwSession:
         return self.events()
 
     async def __aenter__(self) -> AsyncEtwSession:
-        """Async context manager entry."""
-        await self.start()
+        """Async context manager entry.
+
+        Note: Does NOT auto-start the session. Call start() explicitly
+        after adding providers, or use events() which auto-starts.
+        """
         return self
 
     async def __aexit__(
