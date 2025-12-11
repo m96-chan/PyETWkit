@@ -370,7 +370,9 @@ mod tests {
 
     #[test]
     fn test_matches_event_level() {
-        let provider = EtwProvider::by_guid(Uuid::new_v4()).with_level(TraceLevel::Warning);
+        let provider = EtwProvider::by_guid(Uuid::new_v4())
+            .with_level(TraceLevel::Warning)
+            .with_keywords_any(0); // Disable keywords filter for this test
 
         // Should match: level <= Warning (3)
         assert!(provider.matches_event(1, 0, 1, 0)); // Critical
