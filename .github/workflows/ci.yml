@@ -181,8 +181,15 @@ jobs:
           uv pip install pytest pytest-asyncio pytest-cov
           # List all wheels in dist/ to debug version issues
           Get-ChildItem dist/*.whl | ForEach-Object { Write-Host "Found wheel: $($_.Name)" }
-          # Install the wheel - it should be the only one for this Python version
-          $wheel = Get-ChildItem dist/*.whl | Select-Object -First 1
+          # Get Python minor version for matching wheel
+          $pyVer = python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')"
+          Write-Host "Looking for wheel matching Python version: $pyVer"
+          # Install the wheel matching this Python version
+          $wheel = Get-ChildItem dist/*.whl | Where-Object { $_.Name -match $pyVer } | Select-Object -First 1
+          if ($wheel -eq $null) {
+            Write-Host "ERROR: No wheel found for $pyVer"
+            exit 1
+          }
           Write-Host "Installing wheel: $($wheel.FullName)"
           uv pip install "$($wheel.FullName)"
         shell: pwsh
