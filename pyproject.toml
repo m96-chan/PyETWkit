@@ -58,9 +58,10 @@ dashboard = [
 
 [project.urls]
 Homepage = "https://github.com/m96-chan/PyETWkit"
-Documentation = "https://pyetwkit.readthedocs.io"
+Documentation = "https://github.com/m96-chan/PyETWkit#readme"
 Repository = "https://github.com/m96-chan/PyETWkit"
 Issues = "https://github.com/m96-chan/PyETWkit/issues"
+Changelog = "https://github.com/m96-chan/PyETWkit/releases"
 
 [project.scripts]
 pyetwkit = "pyetwkit.cli:main"
