@@ -179,9 +179,12 @@ jobs:
       - name: Install wheel and test dependencies
         run: |
           uv pip install pytest pytest-asyncio pytest-cov
+          # List all wheels in dist/ to debug version issues
+          Get-ChildItem dist/*.whl | ForEach-Object { Write-Host "Found wheel: $($_.Name)" }
+          # Install the wheel - it should be the only one for this Python version
           $wheel = Get-ChildItem dist/*.whl | Select-Object -First 1
           Write-Host "Installing wheel: $($wheel.FullName)"
-          uv pip install "$($wheel.FullName)" --no-index --find-links=dist/
+          uv pip install "$($wheel.FullName)"
         shell: pwsh
 
       - name: Run tests
