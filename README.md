@@ -4,7 +4,6 @@
 [![Python](https://img.shields.io/pypi/pyversions/pyetwkit.svg)](https://pypi.org/project/pyetwkit/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://github.com/m96-chan/PyETWkit/actions/workflows/ci.yml/badge.svg)](https://github.com/m96-chan/PyETWkit/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/m96-chan/PyETWkit/branch/main/graph/badge.svg)](https://codecov.io/gh/m96-chan/PyETWkit)
 
 A modern, high-performance ETW (Event Tracing for Windows) toolkit for Python, powered by a Rust backend.
 
@@ -12,13 +11,17 @@ A modern, high-performance ETW (Event Tracing for Windows) toolkit for Python, p
 
 ## Features
 
-- Real-time ETW streaming (sync & async)
-- Kernel providers: process, thread, registry, file, disk, network...
-- User providers: NDIS, Media Foundation, WASAPI, DXGI, Audio...
-- Filtering: provider / event ID / PID / opcode
-- **Rust backend (pyo3)** for high throughput & zero-copy event delivery
+- **Real-time ETW streaming** with sync API
+- **Kernel providers**: process, thread, registry, file, disk, network
+- **User providers**: DNS, Audio, and more via profiles
+- **Filtering**: by provider, event ID, trace level
+- **ETL file reading**: Parse existing trace logs
+- **Export**: CSV, JSON, JSONL, Parquet, Arrow formats
+- **CLI tool**: `pyetwkit` command for quick monitoring
+- **Provider discovery**: Search and list available providers
+- **Pre-configured profiles**: Audio, network, security scenarios
+- **Rust backend (pyo3)**: High throughput, zero-copy event delivery
 - Windows 10 / 11 / Server supported
-- Modern, simple Python API (no ctypes hell)
 
 ---
 
@@ -28,47 +31,106 @@ A modern, high-performance ETW (Event Tracing for Windows) toolkit for Python, p
 pip install pyetwkit
 ```
 
-> Note: We recommend starting with TestPyPI releases during early development.
-
 ---
 
 ## Quick Start
 
-### Listen to process events
+### CLI Usage
 
-```python
-from pyetwkit import EtwListener
+```bash
+# List available providers
+pyetwkit providers
+pyetwkit providers --search Kernel
 
-listener = EtwListener("Microsoft-Windows-Kernel-Process")
+# List profiles
+pyetwkit profiles
 
-for event in listener.events():
-    print(event.timestamp, event.process_id, event.event_name)
+# Listen to events (requires admin)
+pyetwkit listen Microsoft-Windows-DNS-Client
+pyetwkit listen --profile network
+
+# Export ETL file
+pyetwkit export trace.etl -o events.csv
+pyetwkit export trace.etl -o events.parquet -f parquet
 ```
 
----
-
-### Async streaming
+### Python API
 
 ```python
-import asyncio
-from pyetwkit import EtwStreamer
+from pyetwkit._core import EtwProvider, EtwSession
 
-async def main():
-    async for e in EtwStreamer("Microsoft-Windows-Kernel-Network"):
-        print(e)
+# Create session
+session = EtwSession("MySession")
 
-asyncio.run(main())
+# Add provider
+provider = EtwProvider(
+    "Microsoft-Windows-DNS-Client",
+    "DNS-Client"
+)
+provider = provider.with_level(4)  # Info level
+session.add_provider(provider)
+
+# Start and process events
+session.start()
+
+try:
+    while True:
+        event = session.next_event_timeout(1000)
+        if event:
+            print(f"Event {event.event_id}: {event.provider_name}")
+except KeyboardInterrupt:
+    pass
+finally:
+    session.stop()
 ```
 
----
-
-### Filter by PID
+### Kernel Tracing
 
 ```python
-listener = EtwListener("Microsoft-Windows-Kernel-Process", pid=1234)
+from pyetwkit._core import PyKernelFlags, PyKernelSession
 
-for e in listener:
-    print("Process event:", e)
+flags = PyKernelFlags()
+flags = flags.with_process()  # Enable process events
+
+session = PyKernelSession(flags)
+session.start()
+
+for _ in range(10):
+    event = session.next_event_timeout(1000)
+    if event and event.event_id == 1:  # Process start
+        props = event.to_dict().get("properties", {})
+        print(f"Process: {props.get('ImageFileName')}")
+
+session.stop()
+```
+
+### Provider Discovery
+
+```python
+from pyetwkit._core import list_providers, search_providers
+
+# List all providers
+for p in list_providers()[:10]:
+    print(f"{p.name}: {p.guid}")
+
+# Search by name
+for p in search_providers("Kernel"):
+    print(p.name)
+```
+
+### Export Events
+
+```python
+from pyetwkit._core import EtlReader
+from pyetwkit.export import to_csv, to_parquet
+
+# Read ETL file
+reader = EtlReader("trace.etl")
+events = list(reader.events())
+
+# Export to various formats
+to_csv(events, "events.csv")
+to_parquet(events, "events.parquet")
 ```
 
 ---
@@ -76,71 +138,70 @@ for e in listener:
 ## Architecture
 
 ```
-Python API
+Python API / CLI
   ↓
-Rust backend (pyo3)
+pyetwkit (Python package)
+  ↓
+pyetwkit._core (Rust/pyo3)
+  ↓
+ferrisetw (Rust ETW library)
   ↓
 Windows ETW subsystem
 ```
 
-- Rust handles real-time ETW session processing
-- Fast and safe struct passing to Python
-- Strong backpressure handling with minimal latency
-
 ---
 
-## Providers (Examples)
+## Documentation
 
-| Provider | Description |
-|---------|-------------|
-| Microsoft-Windows-Kernel-Process | Process create/exit |
-| Microsoft-Windows-Kernel-Thread | Thread lifecycle |
-| Microsoft-Windows-Kernel-File | File I/O |
-| Microsoft-Windows-Kernel-Network | TCP/UDP events |
-| Microsoft-Windows-Kernel-Registry | Registry operations |
-| Microsoft-Windows-Win32k | UI subsystem |
-
-User providers (MF, Audio, DXGI, NDIS, WASAPI) are also available.
-
----
-
-## Rust Backend (WIP)
-
-Rust crate structure:
-```
-pyetwkit-core/
- ├─ src/
- │   ├─ lib.rs
- │   ├─ consumer.rs
- │   ├─ provider.rs
- │   └─ event.rs
- ├─ Cargo.toml
-```
-
-Python binding via **pyo3**:
-```rust
-#[pyfunction]
-fn start_provider(provider: String) -> PyResult<()> {
-    // Start ETW session
-}
-```
+- [Tutorial](docs/tutorial.md) - Comprehensive usage guide
+- [API Reference](docs/api/) - Detailed API documentation
+- [Examples](examples/) - Sample scripts
+- [Architecture](docs/architecture/) - Design documents
 
 ---
 
 ## Roadmap
 
-- [ ] Minimal Rust ETW consumer
-- [ ] Provider auto-discovery
-- [ ] Schema loader (manifest reader)
-- [ ] Parquet / Arrow / Pandas export
-- [ ] pyetwkit-cli (live viewer)
-- [ ] Provider profiles for Audio / VRChat / OBS
+### Completed
+
+- [x] Rust ETW consumer (ferrisetw backend)
+- [x] Provider discovery and enumeration
+- [x] User-mode ETW sessions
+- [x] Kernel-mode tracing (process, thread, image load)
+- [x] Event schema and property parsing
+- [x] ETL file reading
+- [x] Export to CSV, JSON, JSONL, Parquet, Arrow
+- [x] CLI tool (`pyetwkit` command)
+- [x] Provider profiles (audio, network, security)
+- [x] Stack trace capture support
+- [x] Session statistics
+
+### Planned
+
+- [ ] Async streaming API
+- [ ] Manifest-based typed events
+- [ ] Real-time event filtering callbacks
+- [ ] Event aggregation and analytics
+- [ ] Live TUI viewer
+
+---
+
+## Examples
+
+See the [examples/](examples/) directory for complete sample scripts:
+
+- `basic_session.py` - Simple ETW session
+- `kernel_trace.py` - Kernel-level process monitoring
+- `export_events.py` - Capture and export events
+- `provider_discovery.py` - Find ETW providers
+- `profiles.py` - Use pre-configured profiles
+- `read_etl.py` - Read ETL files
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
