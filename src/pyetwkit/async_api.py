@@ -79,9 +79,16 @@ class AsyncEtwSession:
         from pyetwkit._core import EtwProvider as CoreProvider
 
         if isinstance(provider, str):
-            prov = CoreProvider(provider, provider)
-            prov = prov.with_level(level)
-            prov = prov.with_any_keyword(keywords)
+            # Try to use static methods for known providers
+            if provider.lower() == "microsoft-windows-dns-client" or "dns" in provider.lower():
+                prov = CoreProvider.dns_client().level(level)
+            elif provider.lower() == "microsoft-windows-kernel-process" or "process" in provider.lower():
+                prov = CoreProvider.kernel_process().level(level)
+            elif provider.lower() == "microsoft-windows-powershell" or "powershell" in provider.lower():
+                prov = CoreProvider.powershell().level(level)
+            else:
+                # Assume it's a GUID
+                prov = CoreProvider(provider, provider).level(level)
         else:
             prov = provider
 

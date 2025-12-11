@@ -12,11 +12,7 @@ def main():
     session = EtwSession("PyETWkitBasicExample")
 
     # Add a provider (DNS client is relatively quiet)
-    provider = EtwProvider(
-        "Microsoft-Windows-DNS-Client",
-        "Microsoft-Windows-DNS-Client",
-    )
-    provider = provider.with_level(4)  # Info level
+    provider = EtwProvider.dns_client().level(4)  # Info level
     session.add_provider(provider)
 
     # Start the session

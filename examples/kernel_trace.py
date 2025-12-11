@@ -4,15 +4,13 @@ This example shows how to monitor kernel events like process
 creation and termination. Run as administrator.
 """
 
-from pyetwkit._core import PyKernelFlags, PyKernelSession
+from pyetwkit._core import KernelSession
 
 
 def main():
     # Create kernel session with process tracking
-    flags = PyKernelFlags()
-    flags = flags.with_process()  # Enable process events
-
-    session = PyKernelSession(flags)
+    session = KernelSession()
+    session.enable_process()  # Enable process events
 
     print("Starting kernel trace for process events... Press Ctrl+C to stop")
     session.start()
@@ -40,7 +38,8 @@ def main():
     except KeyboardInterrupt:
         print(f"\nStopping... Captured {event_count} events")
     finally:
-        session.stop()
+        if session.is_running():
+            session.stop()
 
 
 if __name__ == "__main__":

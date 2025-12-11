@@ -17,11 +17,7 @@ def main():
 
     session = EtwSession("PyETWkitExportExample")
 
-    provider = EtwProvider(
-        "Microsoft-Windows-DNS-Client",
-        "Microsoft-Windows-DNS-Client",
-    )
-    provider = provider.with_level(4)
+    provider = EtwProvider.dns_client().level(4)
     session.add_provider(provider)
 
     print("Capturing events for 10 seconds...")
