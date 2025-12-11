@@ -48,21 +48,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
         with:
-          python-version: "3.11"
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.11
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install ruff black mypy
+        run: uv pip install --system ruff black mypy
 
       - name: Check formatting with black
-        run: black --check src/ tests/
+        run: black --check src/ tests/ examples/
 
       - name: Lint with ruff
-        run: ruff check src/ tests/
+        run: ruff check src/ tests/ examples/
 
       - name: Type check with mypy
         run: mypy src/pyetwkit --ignore-missing-imports --exclude '_stubs\.py$'
@@ -107,19 +108,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
         with:
-          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-
+
       - name: Install maturin
-        run: pip install maturin
+        run: uv pip install --system maturin
 
       - name: Build wheel
-        run: maturin build --release --strip
+        run: maturin build --release --strip -i $(uv python find ${{ matrix.python-version }})
+        shell: bash
         continue-on-error: true  # v0.1.0: Rust compilation issues pending
 
       - name: Upload wheels
@@ -141,10 +159,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
         with:
-          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
 
       - name: Download wheels
         uses: actions/download-artifact@v4
@@ -155,10 +176,10 @@ jobs:
 
       - name: Install wheel and test dependencies
         run: |
-          pip install pytest pytest-asyncio pytest-cov
+          uv pip install --system pytest pytest-asyncio pytest-cov
           $wheel = Get-ChildItem dist/*.whl -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($wheel) {
-            pip install $wheel.FullName
+            uv pip install --system $wheel.FullName
           } else {
             Write-Warning "No wheel found, skipping install"
           }
