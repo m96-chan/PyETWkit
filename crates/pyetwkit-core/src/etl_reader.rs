@@ -114,7 +114,7 @@ impl Iterator for EtlReader {
 }
 
 /// Python wrapper for EtlReader
-#[pyclass(name = "EtlReader")]
+#[pyclass(name = "EtlReader", unsendable)]
 pub struct PyEtlReader {
     inner: Option<EtlReader>,
     started: bool,
