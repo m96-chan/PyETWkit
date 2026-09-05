@@ -9,6 +9,9 @@ __pycache__/
 *$py.class
 *.so
 *.pyd
+# maturin develop drops debug symbols beside the extension; without this they
+# get swept into `maturin sdist`.
+*.pdb
 .Python
 build/
 develop-eggs/
