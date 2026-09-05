@@ -44,6 +44,17 @@ const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
 /// `PROPERTY_FLAGS` bit marking a property as a nested structure.
 const PROPERTY_STRUCT: i32 = 1;
 
+/// `PROPERTY_FLAGS` bit meaning the element count lives in another property
+/// rather than in this one's `count` field.
+const PROPERTY_PARAM_COUNT: i32 = 4;
+
+/// Ceiling on how many elements we will materialise for one array property.
+///
+/// A fixed `count` cannot exceed `u16::MAX` anyway; the cap only matters for a
+/// count read out of another property, where a malformed event could otherwise
+/// ask us for an enormous allocation.
+const MAX_ARRAY_ELEMENTS: u32 = u16::MAX as u32;
+
 // TDH input types. Values from `_TDH_IN_TYPE`; matched numerically because the
 // schema stores them as bare `u16`.
 const IN_NULL: u16 = 0;
@@ -80,6 +91,16 @@ const IN_MANIFEST_COUNTEDSTRING: u16 = 22;
 const IN_MANIFEST_COUNTEDANSISTRING: u16 = 23;
 const IN_MANIFEST_COUNTEDBINARY: u16 = 25;
 
+/// How many elements a property holds.
+///
+/// The schema either states the count outright or names another property of the
+/// same event that carries it, in which case it is only known per event.
+#[derive(Debug, Clone, Copy)]
+enum PropertyCount {
+    Fixed(u16),
+    FromProperty(u16),
+}
+
 /// One property's name and type, lifted out of `TRACE_EVENT_INFO` so that the
 /// cached entry owns no pointers into the original buffer.
 #[derive(Debug, Clone)]
@@ -91,6 +112,7 @@ struct PropertyDesc {
     in_type: u16,
     out_type: u16,
     is_struct: bool,
+    count: PropertyCount,
 }
 
 /// The parsed, owned form of a `TRACE_EVENT_INFO` for one event layout.
@@ -202,6 +224,14 @@ unsafe fn read_layout(record: *const EVENT_RECORD) -> Option<EventLayout> {
             (non_struct.InType, non_struct.OutType)
         };
 
+        // `count` and `countPropertyIndex` overlay each other; the flag says
+        // which one is meaningful.
+        let count = if prop.Flags.0 & PROPERTY_PARAM_COUNT != 0 {
+            PropertyCount::FromProperty(unsafe { prop.Anonymous2.countPropertyIndex })
+        } else {
+            PropertyCount::Fixed(unsafe { prop.Anonymous2.count })
+        };
+
         let mut name_utf16: Vec<u16> = name.encode_utf16().collect();
         name_utf16.push(0);
 
@@ -211,6 +241,7 @@ unsafe fn read_layout(record: *const EVENT_RECORD) -> Option<EventLayout> {
             in_type,
             out_type,
             is_struct,
+            count,
         });
     }
 
@@ -234,16 +265,25 @@ fn layout_for(record: &EventRecord, raw: *const EVENT_RECORD) -> Option<Arc<Even
     layout
 }
 
+/// `PROPERTY_DATA_DESCRIPTOR::ArrayIndex` value asking for a whole property
+/// rather than one element of it.
+const WHOLE_PROPERTY: u32 = u32::MAX;
+
 /// Retrieve one property's raw bytes by name.
+///
+/// `array_index` selects a single element, or [`WHOLE_PROPERTY`] for all of it.
 ///
 /// # Safety
 ///
 /// `record` must point to a valid `EVENT_RECORD` that stays alive for the call.
-unsafe fn property_bytes(record: *const EVENT_RECORD, name_utf16: &[u16]) -> Option<Vec<u8>> {
+unsafe fn property_bytes(
+    record: *const EVENT_RECORD,
+    name_utf16: &[u16],
+    array_index: u32,
+) -> Option<Vec<u8>> {
     let descriptor = PROPERTY_DATA_DESCRIPTOR {
         PropertyName: name_utf16.as_ptr() as u64,
-        // 0xFFFF_FFFF asks for the whole property rather than one array element.
-        ArrayIndex: u32::MAX,
+        ArrayIndex: array_index,
         Reserved: 0,
     };
     let descriptors = [descriptor];
@@ -299,7 +339,15 @@ fn format_sid(bytes: &[u8]) -> Option<String> {
         .iter()
         .fold(0u64, |acc, &b| (acc << 8) | u64::from(b));
 
-    let mut out = format!("S-{}-{}", revision, authority);
+    // The authority is six bytes wide but is conventionally written in decimal,
+    // and `ConvertSidToStringSidW` switches to unpadded uppercase hex once the
+    // value no longer fits in 32 bits. Match that, so a SID we print can be fed
+    // straight back to Windows.
+    let mut out = if authority > u64::from(u32::MAX) {
+        format!("S-{}-0x{:X}", revision, authority)
+    } else {
+        format!("S-{}-{}", revision, authority)
+    };
     for i in 0..sub_count {
         let off = 8 + i * 4;
         let value =
@@ -430,6 +478,116 @@ fn to_event_value(
     Some(value)
 }
 
+/// Byte width of one element, for in-types whose values are always that wide.
+///
+/// `None` means the width depends on the data (strings, blobs), so elements can
+/// only be located by TDH and not by arithmetic here.
+fn fixed_element_size(in_type: u16, pointer_size: usize) -> Option<usize> {
+    Some(match in_type {
+        IN_INT8 | IN_UINT8 => 1,
+        IN_INT16 | IN_UINT16 => 2,
+        IN_INT32 | IN_UINT32 | IN_HEXINT32 | IN_FLOAT | IN_BOOLEAN => 4,
+        IN_INT64 | IN_UINT64 | IN_HEXINT64 | IN_DOUBLE | IN_FILETIME => 8,
+        IN_GUID | IN_SYSTEMTIME => 16,
+        IN_POINTER | IN_SIZET => pointer_size,
+        _ => return None,
+    })
+}
+
+/// Whether an in-type already consumes a whole multi-element blob correctly.
+///
+/// A `count` of N on these means "N characters" or "N bytes", i.e. one value
+/// spanning the blob, not N separate values, so they must not be split up.
+fn spans_whole_blob(in_type: u16) -> bool {
+    matches!(
+        in_type,
+        IN_UNICODECHAR | IN_ANSICHAR | IN_BINARY | IN_HEXDUMP | IN_MANIFEST_COUNTEDBINARY
+    )
+}
+
+/// Read a little-endian unsigned integer of whatever width the slice happens to
+/// be, used for a count that one property borrows from another.
+fn read_unsigned(bytes: &[u8]) -> Option<u64> {
+    Some(match bytes.len() {
+        1 => u64::from(bytes[0]),
+        2 => u64::from(u16::from_le_bytes([bytes[0], bytes[1]])),
+        4 => u64::from(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
+        8 => u64::from_le_bytes(bytes[..8].try_into().ok()?),
+        _ => return None,
+    })
+}
+
+/// Resolve how many elements `prop` holds in this particular event.
+fn element_count(record: *const EVENT_RECORD, layout: &EventLayout, prop: &PropertyDesc) -> u32 {
+    let raw_count = match prop.count {
+        PropertyCount::Fixed(n) => u32::from(n),
+        PropertyCount::FromProperty(index) => layout
+            .properties
+            .get(index as usize)
+            .and_then(|counter| unsafe {
+                property_bytes(record, &counter.name_utf16, WHOLE_PROPERTY)
+            })
+            .as_deref()
+            .and_then(read_unsigned)
+            .and_then(|n| u32::try_from(n).ok())
+            // A count we cannot read is treated as a plain scalar, which is what
+            // this code did before arrays were handled at all.
+            .unwrap_or(1),
+    };
+    raw_count.min(MAX_ARRAY_ELEMENTS)
+}
+
+/// Decode a property that carries more than one element.
+///
+/// Prefers slicing the single blob we already fetched, falling back to asking
+/// TDH for each element when their width is not known up front.
+fn to_event_array(
+    record: *const EVENT_RECORD,
+    prop: &PropertyDesc,
+    whole: &[u8],
+    count: u32,
+    pointer_size: usize,
+) -> Option<EventValue> {
+    let n = count as usize;
+
+    // A byte array reaches Python far more usefully as `bytes` than as a list of
+    // several hundred small ints, and that is exactly what `Binary` already does.
+    if prop.in_type == IN_UINT8 && whole.len() >= n {
+        return Some(EventValue::Binary(whole[..n].to_vec()));
+    }
+
+    let mut items = Vec::with_capacity(n);
+
+    if let Some(size) = fixed_element_size(prop.in_type, pointer_size) {
+        if size > 0 && whole.len() >= size * n {
+            for chunk in whole.chunks_exact(size).take(n) {
+                items.push(to_event_value(
+                    chunk,
+                    prop.in_type,
+                    prop.out_type,
+                    pointer_size,
+                )?);
+            }
+            return Some(EventValue::Array(items));
+        }
+    }
+
+    // Variable-width elements: only TDH knows where each one starts. Stop at the
+    // first element it cannot produce and keep the ones already decoded, rather
+    // than discarding the whole property.
+    for index in 0..count {
+        let Some(bytes) = (unsafe { property_bytes(record, &prop.name_utf16, index) }) else {
+            break;
+        };
+        let Some(value) = to_event_value(&bytes, prop.in_type, prop.out_type, pointer_size) else {
+            break;
+        };
+        items.push(value);
+    }
+
+    Some(EventValue::Array(items))
+}
+
 /// Parse every top-level property of an event.
 ///
 /// Returns an empty map when TDH has no schema for the event, which is normal
@@ -454,10 +612,21 @@ pub fn parse_properties(record: &EventRecord) -> HashMap<String, EventValue> {
         if prop.is_struct {
             continue;
         }
-        let Some(bytes) = (unsafe { property_bytes(raw, &prop.name_utf16) }) else {
+        let Some(bytes) = (unsafe { property_bytes(raw, &prop.name_utf16, WHOLE_PROPERTY) }) else {
             continue;
         };
-        if let Some(value) = to_event_value(&bytes, prop.in_type, prop.out_type, pointer_size) {
+
+        // Without this, an array collapsed to its first element: the whole blob
+        // was handed to a scalar decoder, so e.g. a 176-byte array of UInt8 came
+        // back as the single number 228.
+        let count = element_count(raw, &layout, prop);
+        let value = if count > 1 && !spans_whole_blob(prop.in_type) {
+            to_event_array(raw, prop, &bytes, count, pointer_size)
+        } else {
+            to_event_value(&bytes, prop.in_type, prop.out_type, pointer_size)
+        };
+
+        if let Some(value) = value {
             out.insert(prop.name.clone(), value);
         }
     }
@@ -491,6 +660,31 @@ mod tests {
         // S-1-5-18
         let sid = [1u8, 1, 0, 0, 0, 0, 0, 5, 18, 0, 0, 0];
         assert_eq!(format_sid(&sid).as_deref(), Some("S-1-5-18"));
+    }
+
+    #[test]
+    fn test_format_sid_mandatory_label() {
+        // The real MandatoryLabel payload of a Kernel-Process ProcessStart event:
+        // authority 16 big-endian, sub-authority 12288 little-endian.
+        let sid = [1u8, 1, 0, 0, 0, 0, 0, 16, 0, 0x30, 0, 0];
+        assert_eq!(format_sid(&sid).as_deref(), Some("S-1-16-12288"));
+    }
+
+    #[test]
+    fn test_format_sid_large_authority_uses_hex() {
+        // Windows' own ConvertSidToStringSidW renders an identifier authority
+        // that does not fit in 32 bits as unpadded uppercase hex.
+        let sid = [1u8, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0];
+        assert_eq!(format_sid(&sid).as_deref(), Some("S-1-0x100000000-1"));
+
+        let sid = [1u8, 1, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 1, 0, 0, 0];
+        assert_eq!(format_sid(&sid).as_deref(), Some("S-1-0xFFFFFFFFFFFF-1"));
+    }
+
+    #[test]
+    fn test_format_sid_stays_decimal_just_below_the_hex_boundary() {
+        let sid = [1u8, 1, 0, 0, 0xff, 0xff, 0xff, 0xff, 1, 0, 0, 0];
+        assert_eq!(format_sid(&sid).as_deref(), Some("S-1-4294967295-1"));
     }
 
     #[test]
@@ -534,6 +728,82 @@ mod tests {
             to_event_value(&bytes, IN_POINTER, 0, 8),
             Some(EventValue::Pointer(0x1100_FFEE_DDCC_BBAA))
         ));
+    }
+
+    /// Build a `PropertyDesc` for the array tests; only the fields the array
+    /// path reads actually matter.
+    fn array_desc(in_type: u16, count: u16) -> PropertyDesc {
+        PropertyDesc {
+            name: "Prop".to_string(),
+            name_utf16: "Prop\0".encode_utf16().collect(),
+            in_type,
+            out_type: 0,
+            is_struct: false,
+            count: PropertyCount::Fixed(count),
+        }
+    }
+
+    #[test]
+    fn test_uint8_array_becomes_bytes_not_its_first_element() {
+        // The regression: TimeZoneInformation is UInt8 x 176, and used to come
+        // back as the single number 228.
+        let blob: Vec<u8> = (0..176u32).map(|i| (i % 251) as u8).collect();
+        let desc = array_desc(IN_UINT8, 176);
+        let value = to_event_array(std::ptr::null(), &desc, &blob, 176, 8);
+        match value {
+            Some(EventValue::Binary(b)) => assert_eq!(b, blob),
+            other => panic!("expected the whole blob, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_fixed_width_array_is_split_into_elements() {
+        let mut blob = Vec::new();
+        for n in [1u32, 2, 3, 4] {
+            blob.extend_from_slice(&n.to_le_bytes());
+        }
+        let desc = array_desc(IN_UINT32, 4);
+        let value = to_event_array(std::ptr::null(), &desc, &blob, 4, 8);
+        match value {
+            Some(EventValue::Array(items)) => {
+                assert_eq!(items.len(), 4);
+                assert!(matches!(items[0], EventValue::U32(1)));
+                assert!(matches!(items[3], EventValue::U32(4)));
+            }
+            other => panic!("expected four elements, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_pointer_array_follows_the_emitting_process_width() {
+        let blob = [1u8, 0, 0, 0, 2, 0, 0, 0];
+        let desc = array_desc(IN_POINTER, 2);
+        match to_event_array(std::ptr::null(), &desc, &blob, 2, 4) {
+            Some(EventValue::Array(items)) => {
+                assert_eq!(items.len(), 2);
+                assert!(matches!(items[0], EventValue::Pointer(1)));
+                assert!(matches!(items[1], EventValue::Pointer(2)));
+            }
+            other => panic!("expected two 32-bit pointers, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_char_array_stays_one_string() {
+        // count on a UnicodeChar property means "this many characters", so the
+        // blob is a single string rather than an array of one-char strings.
+        assert!(spans_whole_blob(IN_UNICODECHAR));
+        assert!(spans_whole_blob(IN_BINARY));
+        assert!(!spans_whole_blob(IN_UINT32));
+    }
+
+    #[test]
+    fn test_read_unsigned_widths() {
+        assert_eq!(read_unsigned(&[7]), Some(7));
+        assert_eq!(read_unsigned(&2u16.to_le_bytes()), Some(2));
+        assert_eq!(read_unsigned(&9u32.to_le_bytes()), Some(9));
+        assert_eq!(read_unsigned(&5u64.to_le_bytes()), Some(5));
+        assert_eq!(read_unsigned(&[1, 2, 3]), None);
     }
 
     #[test]
