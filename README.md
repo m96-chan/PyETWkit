@@ -89,7 +89,7 @@ provider = EtwProvider(
     "Microsoft-Windows-DNS-Client",
     "DNS-Client"
 )
-provider = provider.with_level(4)  # Info level
+provider = provider.level(4)  # Info level
 session.add_provider(provider)
 
 # Start and process events

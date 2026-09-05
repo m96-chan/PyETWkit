@@ -2,6 +2,7 @@
 
 use crate::error::{EtwError, Result};
 use crate::filter::EventFilter;
+use pyo3::exceptions::PyDeprecationWarning;
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
@@ -327,6 +328,37 @@ impl PyEtwProvider {
     fn stack_trace(&mut self, enabled: bool) -> Self {
         self.inner.capture_stack = enabled;
         self.clone()
+    }
+
+    /// Deprecated alias for `level()`.
+    ///
+    /// `with_level` is the name of the Rust-side builder, and older versions of
+    /// the README and tutorial incorrectly advertised it on the Python binding
+    /// as well. Kept so that code written against those docs keeps working.
+    /// Use `level()` instead.
+    fn with_level(&mut self, py: Python<'_>, level: u8) -> PyResult<Self> {
+        PyErr::warn(
+            py,
+            py.get_type::<PyDeprecationWarning>().as_any(),
+            c"EtwProvider.with_level() is deprecated and will be removed in a future release; use EtwProvider.level() instead",
+            1,
+        )?;
+        Ok(self.level(level))
+    }
+
+    /// Deprecated alias for `keywords_any()`.
+    ///
+    /// This name only ever existed in the tutorial, never in the binding.
+    /// Kept so that code written against those docs keeps working.
+    /// Use `keywords_any()` instead.
+    fn with_any_keyword(&mut self, py: Python<'_>, keywords: u64) -> PyResult<Self> {
+        PyErr::warn(
+            py,
+            py.get_type::<PyDeprecationWarning>().as_any(),
+            c"EtwProvider.with_any_keyword() is deprecated and will be removed in a future release; use EtwProvider.keywords_any() instead",
+            1,
+        )?;
+        Ok(self.keywords_any(keywords))
     }
 
     fn __repr__(&self) -> String {

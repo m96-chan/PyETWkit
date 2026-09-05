@@ -7,7 +7,27 @@ These stubs provide type hints when the native extension is not available
 
 from __future__ import annotations
 
+import sys
 from typing import Any
+
+if sys.version_info >= (3, 13):
+    from warnings import deprecated
+else:  # pragma: no cover
+    try:
+        from typing_extensions import deprecated
+    except ImportError:
+        from collections.abc import Callable
+        from typing import TypeVar
+
+        _T = TypeVar("_T")
+
+        def deprecated(_message: str) -> Callable[[_T], _T]:
+            """No-op fallback when typing_extensions is unavailable."""
+
+            def decorator(obj: _T) -> _T:
+                return obj
+
+            return decorator
 
 
 class EtwEvent:
@@ -197,6 +217,18 @@ class EtwProvider:
 
     def stack_trace(self, enabled: bool) -> EtwProvider:
         """Enable stack trace capture."""
+        ...
+
+    @deprecated("EtwProvider.with_level() is deprecated; use EtwProvider.level() instead")
+    def with_level(self, level: int) -> EtwProvider:
+        """Deprecated alias for :meth:`level`."""
+        ...
+
+    @deprecated(
+        "EtwProvider.with_any_keyword() is deprecated; use EtwProvider.keywords_any() instead"
+    )
+    def with_any_keyword(self, keywords: int) -> EtwProvider:
+        """Deprecated alias for :meth:`keywords_any`."""
         ...
 
 
