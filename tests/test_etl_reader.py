@@ -350,3 +350,121 @@ class TestNestedStructProperties:
                         assert isinstance(
                             inner, allowed
                         ), f"{name}.{member} produced {type(inner)!r}"
+
+
+NO_SCHEMA_ETL_PATH = Path(__file__).parent / "fixtures" / "no_schema.etl"
+
+requires_no_schema_etl = pytest.mark.skipif(
+    not NO_SCHEMA_ETL_PATH.exists(), reason="Requires schema-less ETL file"
+)
+
+
+class TestEventsWithoutASchema:
+    """Events TDH cannot describe must not lose their payload.
+
+    WPP without a matching TMF, and manifest providers whose manifest is not
+    installed here, have no property names to report a value under. Before the
+    fallback the payload was simply dropped. ``no_schema.etl`` is a capture where
+    roughly half the events are of that kind.
+    """
+
+    @requires_no_schema_etl
+    def test_undecodable_events_keep_their_payload(self) -> None:
+        from pyetwkit import _core as pyetwkit_core
+
+        events = pyetwkit_core.EtlReader(str(NO_SCHEMA_ETL_PATH)).read_all()
+        assert events, "fixture produced no events"
+
+        undecoded = [e for e in events if not e.properties]
+        assert undecoded, "fixture no longer contains schema-less events"
+
+        with_raw = [e for e in undecoded if e.raw_data is not None]
+        assert with_raw, "schema-less events came back with no payload at all"
+        assert all(isinstance(e.raw_data, bytes) for e in with_raw)
+        assert all(len(e.raw_data) > 0 for e in with_raw)
+
+    @requires_no_schema_etl
+    def test_decoded_events_do_not_also_carry_raw_data(self) -> None:
+        """The fallback is a fallback, not a second copy of every event."""
+        from pyetwkit import _core as pyetwkit_core
+
+        events = pyetwkit_core.EtlReader(str(NO_SCHEMA_ETL_PATH)).read_all()
+        decoded = [e for e in events if e.properties]
+        assert decoded, "fixture no longer contains decodable events"
+        assert all(e.raw_data is None for e in decoded)
+
+
+class TestPropertyFormatting:
+    """TDH's own display strings, offered alongside the typed values."""
+
+    def test_formatting_is_off_by_default(self) -> None:
+        from pyetwkit import _core as pyetwkit_core
+
+        assert pyetwkit_core.property_formatting() is False
+
+    @pytest.mark.skipif(
+        not NESTED_STRUCT_ETL_PATH.exists(), reason="Requires nested-struct ETL file"
+    )
+    def test_formatted_properties_appear_only_when_enabled(self) -> None:
+        from pyetwkit import _core as pyetwkit_core
+
+        path = str(NESTED_STRUCT_ETL_PATH)
+
+        off = pyetwkit_core.EtlReader(path).read_all()
+        assert off, "fixture produced no events"
+        assert all(not e.formatted_properties for e in off)
+
+        pyetwkit_core.set_property_formatting(True)
+        try:
+            on = pyetwkit_core.EtlReader(path).read_all()
+            assert any(e.formatted_properties for e in on)
+            for event in on:
+                for name, text in event.formatted_properties.items():
+                    assert isinstance(name, str)
+                    assert isinstance(text, str)
+            # Typed values must be unaffected by the string view.
+            assert [e.properties for e in on] == [e.properties for e in off]
+        finally:
+            pyetwkit_core.set_property_formatting(False)
+
+        assert pyetwkit_core.property_formatting() is False
+
+
+class TestWppTmfSearchPath:
+    """WPP needs a .tmf to decode; this is how one is offered to TDH."""
+
+    def test_search_path_is_unset_by_default(self) -> None:
+        from pyetwkit import _core as pyetwkit_core
+
+        assert pyetwkit_core.wpp_tmf_search_path() is None
+
+    def test_search_path_round_trips(self) -> None:
+        from pyetwkit import _core as pyetwkit_core
+
+        try:
+            pyetwkit_core.set_wpp_tmf_search_path(r"C:\tmf")
+            assert pyetwkit_core.wpp_tmf_search_path() == r"C:\tmf"
+        finally:
+            pyetwkit_core.set_wpp_tmf_search_path(None)
+        assert pyetwkit_core.wpp_tmf_search_path() is None
+
+    @requires_no_schema_etl
+    def test_setting_a_search_path_does_not_disturb_other_decoding(self) -> None:
+        """A path that matches nothing must leave every other event alone."""
+        from pyetwkit import _core as pyetwkit_core
+
+        path = str(NO_SCHEMA_ETL_PATH)
+
+        def snapshot() -> list[tuple[int, tuple[str, ...]]]:
+            return [
+                (e.event_id, tuple(sorted(e.properties)))
+                for e in pyetwkit_core.EtlReader(path).read_all()
+            ]
+
+        before = snapshot()
+        try:
+            pyetwkit_core.set_wpp_tmf_search_path(r"Z:\no\such\directory")
+            assert snapshot() == before
+        finally:
+            pyetwkit_core.set_wpp_tmf_search_path(None)
+        assert snapshot() == before
