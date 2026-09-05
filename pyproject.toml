@@ -97,11 +97,13 @@ exclude_lines = [
 
 [tool.black]
 line-length = 100
-target-version = ["py39", "py310", "py311", "py312"]
+# target-version is intentionally omitted: black infers it from
+# project.requires-python, so it cannot drift out of sync.
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+# target-version is intentionally omitted: ruff infers it from
+# project.requires-python, so it cannot drift out of sync.
 include = ["src/**/*.py", "tests/**/*.py", "examples/**/*.py"]
 
 [tool.ruff.lint]
@@ -128,7 +130,8 @@ ignore = [
 known-first-party = ["pyetwkit"]
 
 [tool.mypy]
-python_version = "3.9"
+# Keep in sync with project.requires-python above; mypy does not infer it.
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
