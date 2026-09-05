@@ -171,7 +171,7 @@ impl EnableProperty {
 }
 
 /// Python wrapper for EnableProperty
-#[pyclass(name = "EnableProperty")]
+#[pyclass(name = "EnableProperty", from_py_object)]
 #[derive(Clone)]
 pub struct PyEnableProperty;
 
@@ -236,7 +236,7 @@ pub mod known_providers {
 }
 
 /// Python wrapper for EtwProvider
-#[pyclass(name = "EtwProvider")]
+#[pyclass(name = "EtwProvider", from_py_object)]
 #[derive(Clone)]
 pub struct PyEtwProvider {
     pub(crate) inner: EtwProvider,
