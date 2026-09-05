@@ -185,7 +185,7 @@ class TestGenericPropertyParsing:
 
         seen: set[str] = set()
         for event in events:
-            seen.update(event.properties().keys())
+            seen.update(event.properties.keys())
 
         if not seen:
             # Every event in the fixture lacked a resolvable TDH schema, which
@@ -212,7 +212,7 @@ class TestGenericPropertyParsing:
             pytest.skip("Sample ETL file contained no events")
 
         for event in events:
-            props = event.properties()
+            props = event.properties
             assert props == event.to_dict()["properties"]
 
     @pytest.mark.skipif(SAMPLE_ETL_PATH is None, reason="Requires sample ETL file")
@@ -229,5 +229,5 @@ class TestGenericPropertyParsing:
 
         allowed = (bool, int, float, str, bytes, list, dict, type(None))
         for event in events:
-            for name, value in event.properties().items():
+            for name, value in event.properties.items():
                 assert isinstance(value, allowed), f"{name} produced {type(value)!r}"
