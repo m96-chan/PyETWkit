@@ -141,9 +141,10 @@ fn wide_string_at(buf: &[u8], offset: u32) -> Option<String> {
     // The offset is a byte offset but the text is UTF-16, so an odd offset or a
     // trailing odd byte would make us read a partial code unit.
     let tail = &buf[start..];
-    let units: Vec<u16> = tail
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+    let (pairs, _) = tail.as_chunks::<2>();
+    let units: Vec<u16> = pairs
+        .iter()
+        .map(|&[lo, hi]| u16::from_le_bytes([lo, hi]))
         .take_while(|&u| u != 0)
         .collect();
     if units.is_empty() {
@@ -266,9 +267,10 @@ unsafe fn property_bytes(record: *const EVENT_RECORD, name_utf16: &[u16]) -> Opt
 
 /// Decode a UTF-16 blob, trimming a trailing NUL if the provider included one.
 fn decode_utf16(bytes: &[u8]) -> String {
-    let units: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+    let (pairs, _) = bytes.as_chunks::<2>();
+    let units: Vec<u16> = pairs
+        .iter()
+        .map(|&[lo, hi]| u16::from_le_bytes([lo, hi]))
         .collect();
     let units = units.strip_suffix(&[0u16]).unwrap_or(&units);
     String::from_utf16_lossy(units)
