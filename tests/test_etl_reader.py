@@ -10,9 +10,14 @@ import pytest
 
 
 def check_extension_available() -> bool:
-    """Check if native extension is available."""
+    """Check if the native extension is available.
+
+    maturin builds the extension as ``pyetwkit._core`` (see ``module-name`` in
+    pyproject.toml), never as a top-level ``pyetwkit_core``. Probing for the
+    latter therefore always failed, which silently skipped this entire module.
+    """
     try:
-        import pyetwkit_core  # noqa: F401
+        from pyetwkit import _core  # noqa: F401
 
         return True
     except ImportError:
@@ -31,13 +36,13 @@ class TestEtlReader:
 
     def test_etl_reader_exists(self) -> None:
         """Test that EtlReader class exists."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         assert hasattr(pyetwkit_core, "EtlReader")
 
     def test_etl_reader_file_not_found(self) -> None:
         """Test that opening non-existent file raises error."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         with pytest.raises((FileNotFoundError, OSError, RuntimeError)):
             pyetwkit_core.EtlReader("nonexistent_file.etl")
@@ -49,7 +54,7 @@ class TestEtlReader:
         Invalid file format is detected when starting to process events.
         This test verifies that behavior.
         """
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         # Create a temporary file with invalid content
         with tempfile.NamedTemporaryFile(suffix=".etl", delete=False) as f:
@@ -66,7 +71,7 @@ class TestEtlReader:
 
     def test_etl_reader_is_context_manager(self) -> None:
         """Test that EtlReader can be used as context manager."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         # This test verifies the interface exists
         # Actual file reading requires a valid ETL file
@@ -75,7 +80,7 @@ class TestEtlReader:
 
     def test_etl_reader_is_iterable(self) -> None:
         """Test that EtlReader is iterable."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         assert hasattr(pyetwkit_core.EtlReader, "__iter__")
 
@@ -114,7 +119,7 @@ class TestEtlReaderWithFile:
         if sample_etl_path is None:
             pytest.skip("No sample ETL file available")
 
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         with pyetwkit_core.EtlReader(str(sample_etl_path)) as reader:
             events = list(reader)
@@ -127,7 +132,7 @@ class TestEtlReaderWithFile:
         if sample_etl_path is None:
             pytest.skip("No sample ETL file available")
 
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         with pyetwkit_core.EtlReader(str(sample_etl_path)) as reader:
             events = list(reader)
@@ -169,7 +174,7 @@ class TestGenericPropertyParsing:
     @pytest.mark.skipif(SAMPLE_ETL_PATH is None, reason="Requires sample ETL file")
     def test_properties_are_not_limited_to_the_legacy_guess_list(self) -> None:
         """Events should expose whatever their schema declares."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         assert SAMPLE_ETL_PATH is not None
         with pyetwkit_core.EtlReader(str(SAMPLE_ETL_PATH)) as reader:
@@ -197,7 +202,7 @@ class TestGenericPropertyParsing:
     @pytest.mark.skipif(SAMPLE_ETL_PATH is None, reason="Requires sample ETL file")
     def test_properties_round_trip_into_to_dict(self) -> None:
         """Whatever properties() reports must survive into to_dict()."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         assert SAMPLE_ETL_PATH is not None
         with pyetwkit_core.EtlReader(str(SAMPLE_ETL_PATH)) as reader:
@@ -213,7 +218,7 @@ class TestGenericPropertyParsing:
     @pytest.mark.skipif(SAMPLE_ETL_PATH is None, reason="Requires sample ETL file")
     def test_property_values_are_python_native_types(self) -> None:
         """Parsed values must be usable from Python, not opaque handles."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         assert SAMPLE_ETL_PATH is not None
         with pyetwkit_core.EtlReader(str(SAMPLE_ETL_PATH)) as reader:
