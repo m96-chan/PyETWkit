@@ -26,7 +26,7 @@ pyo3 = { version = "0.25", features = ["extension-module"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 
 # Error handling
-thiserror = "1.0"
+thiserror = "2.0"
 anyhow = "1.0"
 
 # Logging
