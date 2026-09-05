@@ -49,7 +49,7 @@ jobs:
         run: maturin build --release --strip -m crates/pyetwkit-core/Cargo.toml
 
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.python-version }}
           path: target/wheels/*.whl
@@ -72,7 +72,7 @@ jobs:
         run: maturin sdist -m crates/pyetwkit-core/Cargo.toml
 
       - name: Upload sdist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: target/wheels/*.tar.gz
