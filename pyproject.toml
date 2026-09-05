@@ -67,6 +67,11 @@ Changelog = "https://github.com/m96-chan/PyETWkit/releases"
 pyetwkit = "pyetwkit.cli:main"
 
 [tool.maturin]
+# The root Cargo.toml is a virtual workspace manifest with no [package], so
+# maturin cannot build from it. CI already works around this by passing
+# `-m crates/pyetwkit-core/Cargo.toml`, but a plain `pip install .` has no such
+# flag and failed with "missing field `package`". Point maturin at the crate.
+manifest-path = "crates/pyetwkit-core/Cargo.toml"
 features = ["pyo3/extension-module"]
 python-source = "src"
 module-name = "pyetwkit._core"
