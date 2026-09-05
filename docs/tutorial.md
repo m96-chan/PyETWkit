@@ -44,7 +44,7 @@ provider = EtwProvider(
     "Microsoft-Windows-DNS-Client",
     "Microsoft-Windows-DNS-Client"
 )
-provider = provider.with_level(4)  # Info level
+provider = provider.level(4)  # Info level
 session.add_provider(provider)
 
 # Start and process events
@@ -85,10 +85,10 @@ from pyetwkit._core import EtwProvider
 provider = EtwProvider("Microsoft-Windows-DNS-Client", "DNS-Client")
 
 # Set trace level (1=Critical, 2=Error, 3=Warning, 4=Info, 5=Verbose)
-provider = provider.with_level(4)
+provider = provider.level(4)
 
 # Enable all keywords (event categories)
-provider = provider.with_any_keyword(0xFFFFFFFF)
+provider = provider.keywords_any(0xFFFFFFFF)
 ```
 
 ### Provider Discovery

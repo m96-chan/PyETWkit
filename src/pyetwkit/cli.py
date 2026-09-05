@@ -204,7 +204,7 @@ def listen(
 
         for name, guid_or_name in providers_to_use:
             prov = EtwProvider(guid_or_name, name)
-            prov = prov.with_level(level_map.get(level, 4))
+            prov = prov.level(level_map.get(level, 4))
             session.add_provider(prov)
 
         session.start()
@@ -345,7 +345,7 @@ def dashboard(
 
         for p in providers_to_use:
             prov = EtwProvider(p, p)
-            prov = prov.with_level(4)  # Info level
+            prov = prov.level(4)  # Info level
             session.add_provider(prov)
 
         session.start()
