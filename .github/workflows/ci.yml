@@ -60,7 +60,11 @@ jobs:
           echo "$PWD/.venv/bin" >> $GITHUB_PATH
 
       - name: Install dependencies
-        run: uv pip install ruff black mypy
+        # black and ruff are pinned: both gate the build with a hard failure, and
+        # an unpinned upgrade changes the required formatting or adds lint rules,
+        # breaking CI on every branch without any code change. mypy is left
+        # unpinned because its step is continue-on-error.
+        run: uv pip install "ruff==0.16.6" "black==26.5.1" mypy
 
       - name: Check formatting with black
         run: black --check src/ tests/ examples/
