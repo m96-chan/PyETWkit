@@ -186,7 +186,7 @@ unsafe fn read_wide_string(ptr: *const u16) -> String {
 // Python bindings
 
 /// Python wrapper for ProviderInfo
-#[pyclass(name = "ProviderInfo")]
+#[pyclass(name = "ProviderInfo", from_py_object)]
 #[derive(Clone)]
 pub struct PyProviderInfo {
     inner: ProviderInfo,
@@ -231,7 +231,7 @@ impl From<ProviderInfo> for PyProviderInfo {
 }
 
 /// Python wrapper for ProviderDetails
-#[pyclass(name = "ProviderDetails")]
+#[pyclass(name = "ProviderDetails", from_py_object)]
 #[derive(Clone)]
 pub struct PyProviderDetails {
     inner: ProviderDetails,

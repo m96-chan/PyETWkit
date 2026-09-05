@@ -149,7 +149,7 @@ impl Default for StatsTracker {
 pub type SharedStatsTracker = Arc<StatsTracker>;
 
 /// Python wrapper for SessionStats
-#[pyclass(name = "SessionStats")]
+#[pyclass(name = "SessionStats", from_py_object)]
 #[derive(Clone)]
 pub struct PySessionStats {
     inner: SessionStats,
@@ -227,7 +227,7 @@ impl PySessionStats {
     }
 
     /// Convert to dictionary
-    fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn to_dict(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = pyo3::types::PyDict::new(py);
         dict.set_item("events_received", self.inner.events_received)?;
         dict.set_item("events_processed", self.inner.events_processed)?;

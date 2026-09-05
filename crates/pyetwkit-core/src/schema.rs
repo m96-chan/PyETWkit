@@ -194,7 +194,7 @@ impl Default for SchemaCache {
 // Python bindings
 
 /// Python wrapper for PropertyInfo
-#[pyclass(name = "PropertyInfo")]
+#[pyclass(name = "PropertyInfo", from_py_object)]
 #[derive(Clone)]
 pub struct PyPropertyInfo {
     inner: PropertyInfo,
@@ -243,7 +243,7 @@ impl From<PropertyInfo> for PyPropertyInfo {
 }
 
 /// Python wrapper for EventSchema
-#[pyclass(name = "EventSchema")]
+#[pyclass(name = "EventSchema", from_py_object)]
 #[derive(Clone)]
 pub struct PyEventSchema {
     inner: EventSchema,

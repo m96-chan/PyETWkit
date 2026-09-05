@@ -144,7 +144,7 @@ impl FilterBuilder {
 }
 
 /// Python wrapper for event filtering
-#[pyclass(name = "EventFilter")]
+#[pyclass(name = "EventFilter", from_py_object)]
 #[derive(Clone)]
 pub struct PyEventFilter {
     pub(crate) filters: Vec<EventFilter>,

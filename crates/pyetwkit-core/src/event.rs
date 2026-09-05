@@ -186,7 +186,7 @@ impl EventValue {
 }
 
 /// Python wrapper for EtwEvent
-#[pyclass(name = "EtwEvent")]
+#[pyclass(name = "EtwEvent", from_py_object)]
 #[derive(Clone)]
 pub struct PyEtwEvent {
     inner: EtwEvent,
@@ -301,7 +301,7 @@ impl PyEtwEvent {
     }
 
     /// Get a specific property by name
-    fn get(&self, py: Python<'_>, name: &str) -> PyResult<Option<PyObject>> {
+    fn get(&self, py: Python<'_>, name: &str) -> PyResult<Option<Py<PyAny>>> {
         match self.inner.properties.get(name) {
             Some(value) => Ok(Some(event_value_to_py(py, value)?)),
             None => Ok(None),
@@ -428,7 +428,7 @@ impl PyEtwEvent {
 }
 
 /// Convert EventValue to Python object
-fn event_value_to_py(py: Python<'_>, value: &EventValue) -> PyResult<PyObject> {
+fn event_value_to_py(py: Python<'_>, value: &EventValue) -> PyResult<Py<PyAny>> {
     use pyo3::IntoPyObject;
     Ok(match value {
         EventValue::Null => py.None().into_pyobject(py)?.to_owned().into_any().unbind(),
