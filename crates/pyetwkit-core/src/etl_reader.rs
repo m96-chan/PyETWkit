@@ -8,7 +8,7 @@ use crate::event::EtwEvent;
 use crate::session::parse_event_record;
 
 use ferrisetw::schema_locator::SchemaLocator;
-use ferrisetw::trace::FileTrace;
+use ferrisetw::trace::{FileTrace, TraceTrait};
 use ferrisetw::EventRecord;
 use pyo3::prelude::*;
 use std::path::{Path, PathBuf};
@@ -57,12 +57,24 @@ impl EtlReader {
                 let _ = tx.send(event);
             };
 
-            // Build file trace using ferrisetw
-            // FileTrace::new returns a builder, then call start_and_process to begin
-            let trace_builder = FileTrace::new(path, callback);
+            // `start_and_process()` does not block: it spawns its own worker and
+            // hands back the `FileTrace`, whose `Drop` closes the trace. Binding
+            // that to `_` therefore stopped the trace before a single event could
+            // be delivered, which is why every file read back as empty. Drive the
+            // processing here instead, keeping `trace` alive for the whole run.
+            let (trace, trace_handle) = match FileTrace::new(path, callback).start() {
+                Ok(pair) => pair,
+                Err(e) => {
+                    log::warn!("failed to open ETL file for reading: {e:?}");
+                    return;
+                }
+            };
 
-            // Process all events - this blocks until file is fully read
-            let _ = trace_builder.start_and_process();
+            // Blocks until the file has been read to the end.
+            if let Err(e) = FileTrace::process_from_handle(trace_handle) {
+                log::warn!("error while processing ETL file: {e:?}");
+            }
+            drop(trace);
         });
 
         self.thread_handle = Some(handle);
@@ -206,7 +218,11 @@ impl PyEtlReader {
             self.started = true;
         }
 
-        Ok(reader.try_next_event().map(crate::event::PyEtwEvent::from))
+        // Blocking receive: `try_next_event` returned `None` whenever the reader
+        // thread simply had not produced an event yet, and PyO3 turns that into
+        // `StopIteration`, so `list(reader)` ended on the first poll. `recv`
+        // yields `None` only once the sender is dropped, i.e. at end of file.
+        Ok(reader.next_event().map(crate::event::PyEtwEvent::from))
     }
 }
 
