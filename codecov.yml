@@ -1,0 +1,36 @@
+# Codecov configuration.
+#
+# Deliberately informational for now: coverage is not yet a trustworthy gate on
+# this repo. See #77 -- 112 of 306 tests never execute because eight test files
+# probe for the wrong extension module name, so the measured percentage reflects
+# far less of the suite than it appears to. Turning `informational` off before
+# that is fixed would block PRs on a number that does not mean what it says.
+#
+# The Rust crate is not measured at all; only src/pyetwkit is.
+
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+        target: auto
+        threshold: 2%
+    patch:
+      default:
+        informational: true
+        target: auto
+
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
+  require_changes: true
+
+# The five Test Python matrix jobs each upload a report.
+flag_management:
+  default_rules:
+    carryforward: true
+
+ignore:
+  - "tests/**"
+  - "examples/**"
+  - "docs/**"
