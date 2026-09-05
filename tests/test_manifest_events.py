@@ -8,7 +8,7 @@ import pytest
 def check_extension_available() -> bool:
     """Check if native extension is available."""
     try:
-        import pyetwkit_core  # noqa: F401
+        from pyetwkit import _core  # noqa: F401
 
         return True
     except ImportError:

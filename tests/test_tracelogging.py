@@ -6,7 +6,7 @@ import pytest
 def check_extension_available() -> bool:
     """Check if native extension is available."""
     try:
-        import pyetwkit_core  # noqa: F401
+        from pyetwkit import _core  # noqa: F401
 
         return True
     except ImportError:
@@ -25,7 +25,7 @@ class TestTraceLoggingDetection:
 
     def test_event_has_is_tracelogging(self) -> None:
         """Test that EtwEvent can identify TraceLogging events."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         event_class = pyetwkit_core.EtwEvent
         # Should have a way to check if event is TraceLogging
@@ -42,7 +42,7 @@ class TestTraceLoggingSchema:
 
     def test_tracelogging_schema_support(self) -> None:
         """Test that TraceLogging schema can be parsed."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         # Either SchemaLocator handles TraceLogging or there's a specific class
         has_tl_support = (
@@ -58,7 +58,7 @@ class TestTraceLoggingProvider:
 
     def test_provider_source_tracelogging(self) -> None:
         """Test that provider source can be TraceLogging."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         # Check if ProviderSource includes TraceLogging
         # This was added in discovery module
@@ -74,7 +74,7 @@ class TestTraceLoggingMetadata:
 
     def test_event_metadata_parsing(self) -> None:
         """Test that event metadata can be parsed from TraceLogging events."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         event_class = pyetwkit_core.EtwEvent
         # Properties dict should work for all event types including TraceLogging
