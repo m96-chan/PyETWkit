@@ -1,14 +1,13 @@
 //! ETW Session management using ferrisetw
 
 use crate::error::{EtwError, Result};
-use crate::event::{EtwEvent, EventValue, PyEtwEvent};
+use crate::event::{EtwEvent, PyEtwEvent};
 use crate::filter::EventFilter;
 use crate::provider::{EtwProvider, PyEtwProvider, TraceLevel};
 use crate::stats::{PySessionStats, SessionStats, SharedStatsTracker, StatsTracker};
 
 use chrono::{TimeZone, Utc};
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
-use ferrisetw::parser::Parser;
 use ferrisetw::provider::Provider;
 use ferrisetw::schema::Schema;
 use ferrisetw::schema_locator::SchemaLocator;
@@ -17,7 +16,6 @@ use ferrisetw::EventRecord;
 use parking_lot::RwLock;
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -359,56 +357,16 @@ pub fn parse_event_record(record: &EventRecord, schema: Option<&Schema>) -> EtwE
         event.activity_id = Some(guid_to_uuid(activity));
     }
 
-    // Parse properties using schema if available
+    // Properties come from TDH, which can enumerate the real schema. The
+    // ferrisetw schema is still consulted for the provider name, which TDH
+    // does not need to be asked for separately.
+    event.properties = crate::tdh::parse_properties(record);
     if let Some(schema) = schema {
-        let parser = Parser::create(record, schema);
-        event.properties = parse_properties(&parser, schema);
         event.provider_name = Some(schema.provider_name().to_string());
     }
     // Note: raw_data extraction removed as user_buffer is private in ferrisetw 1.2
 
     event
-}
-
-/// Parse event properties from schema
-/// Note: ferrisetw 1.2 made properties() private, so we can't enumerate properties.
-/// Instead, we extract common known properties if they exist.
-fn parse_properties(parser: &Parser, _schema: &Schema) -> HashMap<String, EventValue> {
-    let mut properties = HashMap::new();
-
-    // Try common property names that might exist in various events
-    let common_props = [
-        "ProcessId",
-        "ThreadId",
-        "ImageFileName",
-        "ProcessName",
-        "CommandLine",
-        "FileName",
-        "FilePath",
-        "Message",
-        "Data",
-        "Status",
-        "Result",
-        "ErrorCode",
-    ];
-
-    for name in common_props {
-        // Try different types for each property
-        if let Ok(v) = parser.try_parse::<String>(name) {
-            properties.insert(name.to_string(), EventValue::String(v));
-        } else if let Ok(v) = parser.try_parse::<u64>(name) {
-            properties.insert(name.to_string(), EventValue::U64(v));
-        } else if let Ok(v) = parser.try_parse::<u32>(name) {
-            properties.insert(name.to_string(), EventValue::U32(v));
-        } else if let Ok(v) = parser.try_parse::<i64>(name) {
-            properties.insert(name.to_string(), EventValue::I64(v));
-        } else if let Ok(v) = parser.try_parse::<i32>(name) {
-            properties.insert(name.to_string(), EventValue::I32(v));
-        }
-        // Skip if property doesn't exist or can't be parsed
-    }
-
-    properties
 }
 
 /// Python wrapper for EtwSession

@@ -136,3 +136,93 @@ class TestEtlReaderWithFile:
                 assert hasattr(event, "event_id")
                 assert hasattr(event, "provider_id")
                 assert hasattr(event, "timestamp")
+
+
+# Properties that the old hardcoded parser in session.rs used to guess at, before
+# properties were enumerated from the event schema via TDH. Any name outside this
+# set proves the parser is no longer limited to the guess list.
+LEGACY_GUESSED_PROPERTIES = frozenset(
+    {
+        "ProcessId",
+        "ThreadId",
+        "ImageFileName",
+        "ProcessName",
+        "CommandLine",
+        "FileName",
+        "FilePath",
+        "Message",
+        "Data",
+        "Status",
+        "Result",
+        "ErrorCode",
+    }
+)
+
+
+class TestGenericPropertyParsing:
+    """Regression tests for schema-driven property parsing.
+
+    Reading an ETL file needs no administrator rights, so unlike the live-capture
+    tests these run everywhere, which is what makes them a usable guard.
+    """
+
+    @pytest.mark.skipif(SAMPLE_ETL_PATH is None, reason="Requires sample ETL file")
+    def test_properties_are_not_limited_to_the_legacy_guess_list(self) -> None:
+        """Events should expose whatever their schema declares."""
+        import pyetwkit_core
+
+        assert SAMPLE_ETL_PATH is not None
+        with pyetwkit_core.EtlReader(str(SAMPLE_ETL_PATH)) as reader:
+            events = list(reader)
+
+        if not events:
+            pytest.skip("Sample ETL file contained no events")
+
+        seen: set[str] = set()
+        for event in events:
+            seen.update(event.properties().keys())
+
+        if not seen:
+            # Every event in the fixture lacked a resolvable TDH schema, which
+            # happens for WPP and for providers with no manifest installed.
+            # Skipping keeps this from failing for an environmental reason, but
+            # it does mean the assertion below went unexercised.
+            pytest.skip("No event in the sample ETL had a resolvable schema")
+
+        assert not seen.issubset(LEGACY_GUESSED_PROPERTIES), (
+            "Only legacy guessed property names were found, so properties are "
+            f"probably still not schema-driven. Saw: {sorted(seen)}"
+        )
+
+    @pytest.mark.skipif(SAMPLE_ETL_PATH is None, reason="Requires sample ETL file")
+    def test_properties_round_trip_into_to_dict(self) -> None:
+        """Whatever properties() reports must survive into to_dict()."""
+        import pyetwkit_core
+
+        assert SAMPLE_ETL_PATH is not None
+        with pyetwkit_core.EtlReader(str(SAMPLE_ETL_PATH)) as reader:
+            events = list(reader)
+
+        if not events:
+            pytest.skip("Sample ETL file contained no events")
+
+        for event in events:
+            props = event.properties()
+            assert props == event.to_dict()["properties"]
+
+    @pytest.mark.skipif(SAMPLE_ETL_PATH is None, reason="Requires sample ETL file")
+    def test_property_values_are_python_native_types(self) -> None:
+        """Parsed values must be usable from Python, not opaque handles."""
+        import pyetwkit_core
+
+        assert SAMPLE_ETL_PATH is not None
+        with pyetwkit_core.EtlReader(str(SAMPLE_ETL_PATH)) as reader:
+            events = list(reader)
+
+        if not events:
+            pytest.skip("Sample ETL file contained no events")
+
+        allowed = (bool, int, float, str, bytes, list, dict, type(None))
+        for event in events:
+            for name, value in event.properties().items():
+                assert isinstance(value, allowed), f"{name} produced {type(value)!r}"

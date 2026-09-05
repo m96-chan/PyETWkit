@@ -23,6 +23,7 @@ pub mod provider;
 pub mod schema;
 pub mod session;
 pub mod stats;
+pub mod tdh;
 
 // Re-export main types
 pub use discovery::{
