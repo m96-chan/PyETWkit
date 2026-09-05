@@ -4,6 +4,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/pyetwkit.svg)](https://pypi.org/project/pyetwkit/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://github.com/m96-chan/PyETWkit/actions/workflows/ci.yml/badge.svg)](https://github.com/m96-chan/PyETWkit/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/m96-chan/PyETWkit/branch/main/graph/badge.svg)](https://codecov.io/gh/m96-chan/PyETWkit)
 
 A modern, high-performance ETW (Event Tracing for Windows) toolkit for Python, powered by a Rust backend.
 

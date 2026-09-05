@@ -209,11 +209,19 @@ jobs:
           if (Test-Path $testDir) { Remove-Item -Recurse -Force $testDir }
           Copy-Item -Recurse "$env:GITHUB_WORKSPACE\tests" $testDir
           cd $testDir
-          & "$env:GITHUB_WORKSPACE\.venv\Scripts\pytest.exe" . -v --cov=pyetwkit --cov-report=xml
+          # Write the report back to the workspace: pytest runs from $testDir, so a
+          # bare --cov-report=xml would leave coverage.xml where the upload step
+          # cannot see it.
+          & "$env:GITHUB_WORKSPACE\.venv\Scripts\pytest.exe" . -v --cov=pyetwkit --cov-branch --cov-report="xml:$env:GITHUB_WORKSPACE\coverage.xml"
         shell: pwsh
 
       - name: Upload coverage
         uses: codecov/codecov-action@v7
         with:
           files: coverage.xml
+          # Distinguishes the five matrix uploads from each other.
+          flags: python-${{ matrix.python-version }}
+          # Optional for public repos, but tokenless uploads are rate limited.
+          # Unset simply falls back to the tokenless path.
+          token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
