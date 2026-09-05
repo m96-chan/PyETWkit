@@ -349,15 +349,13 @@ class Dashboard:
 
             clear_btn.click(fn=clear_buffer, outputs=[events_table, stats_box])
 
-            gr.Markdown(
-                """
+            gr.Markdown("""
                 ---
                 **Usage:**
                 - Events are automatically refreshed every 0.5 seconds
                 - Statistics update every 1 second
                 - Use 'Clear Events' to reset the buffer
-                """
-            )
+                """)
 
         return app
 
