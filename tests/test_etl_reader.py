@@ -231,3 +231,98 @@ class TestGenericPropertyParsing:
         for event in events:
             for name, value in event.properties.items():
                 assert isinstance(value, allowed), f"{name} produced {type(value)!r}"
+
+
+NESTED_STRUCT_ETL_PATH = Path(__file__).parent / "fixtures" / "nested_struct.etl"
+
+
+class TestNestedStructProperties:
+    """Regression tests for properties whose type is a nested structure.
+
+    ``sample.etl`` cannot cover these: Microsoft-Windows-Kernel-Process declares
+    no struct-typed property. ``nested_struct.etl`` is a short capture of
+    Kernel-Processor-Power core-parking events, which carry several
+    (see ``fixtures/create_nested_struct_etl.ps1``).
+    """
+
+    @pytest.mark.skipif(
+        not NESTED_STRUCT_ETL_PATH.exists(), reason="Requires nested-struct ETL file"
+    )
+    def test_struct_properties_are_dicts_of_their_members(self) -> None:
+        """A struct property must expose its members, not vanish."""
+        from pyetwkit import _core as pyetwkit_core
+
+        events = pyetwkit_core.EtlReader(str(NESTED_STRUCT_ETL_PATH)).read_all()
+        assert events, "fixture produced no events"
+
+        structs = {
+            name: value
+            for event in events
+            for name, value in event.properties.items()
+            if isinstance(value, dict)
+        }
+        assert structs, (
+            "no struct-valued property was decoded; before nested structures "
+            "were supported these were skipped outright"
+        )
+
+        # Every core-parking affinity struct is a { Number, Affinity } pair.
+        assert "NewPark" in structs, sorted(structs)
+        assert set(structs["NewPark"]) == {"Number", "Affinity"}
+        assert all(isinstance(v, int) for v in structs["NewPark"].values())
+
+    @pytest.mark.skipif(
+        not NESTED_STRUCT_ETL_PATH.exists(), reason="Requires nested-struct ETL file"
+    )
+    def test_struct_members_do_not_leak_into_the_top_level(self) -> None:
+        """Members belong to their struct, not beside it.
+
+        The layout vector holds struct members too, so that the schema's own
+        indices stay usable; only the top-level properties may become keys.
+        """
+        from pyetwkit import _core as pyetwkit_core
+
+        events = pyetwkit_core.EtlReader(str(NESTED_STRUCT_ETL_PATH)).read_all()
+        assert events, "fixture produced no events"
+
+        for event in events:
+            props = event.properties
+            if "NewPark" not in props:
+                continue
+            assert "Affinity" not in props
+            assert "Number" not in props
+            return
+        pytest.fail("no event carried a NewPark struct")
+
+    @pytest.mark.skipif(
+        not NESTED_STRUCT_ETL_PATH.exists(), reason="Requires nested-struct ETL file"
+    )
+    def test_struct_values_survive_into_to_dict(self) -> None:
+        """Structs must round-trip like every other value."""
+        from pyetwkit import _core as pyetwkit_core
+
+        events = pyetwkit_core.EtlReader(str(NESTED_STRUCT_ETL_PATH)).read_all()
+        assert events, "fixture produced no events"
+
+        for event in events:
+            assert event.properties == event.to_dict()["properties"]
+
+    @pytest.mark.skipif(
+        not NESTED_STRUCT_ETL_PATH.exists(), reason="Requires nested-struct ETL file"
+    )
+    def test_nested_values_are_python_native_types(self) -> None:
+        """Members must be usable from Python, recursively."""
+        from pyetwkit import _core as pyetwkit_core
+
+        allowed = (bool, int, float, str, bytes, list, dict, type(None))
+        events = pyetwkit_core.EtlReader(str(NESTED_STRUCT_ETL_PATH)).read_all()
+        assert events, "fixture produced no events"
+
+        for event in events:
+            for name, value in event.properties.items():
+                assert isinstance(value, allowed), f"{name} produced {type(value)!r}"
+                if isinstance(value, dict):
+                    for member, inner in value.items():
+                        assert isinstance(
+                            inner, allowed
+                        ), f"{name}.{member} produced {type(inner)!r}"
