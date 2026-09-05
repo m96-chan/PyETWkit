@@ -113,12 +113,44 @@ struct PropertyDesc {
     out_type: u16,
     is_struct: bool,
     count: PropertyCount,
+    /// For a struct, the index of its first member in [`EventLayout::properties`].
+    struct_start: u16,
+    /// For a struct, how many members follow `struct_start`.
+    struct_members: u16,
+}
+
+impl PropertyDesc {
+    /// A stand-in for a property TDH gave no name for.
+    ///
+    /// It occupies the slot so that later properties keep the index the schema
+    /// refers to them by, and is skipped when values are read: an unnamed
+    /// property has no key to store a value under.
+    fn placeholder() -> Self {
+        Self {
+            name: String::new(),
+            name_utf16: Vec::new(),
+            in_type: IN_NULL,
+            out_type: 0,
+            is_struct: false,
+            count: PropertyCount::Fixed(1),
+            struct_start: 0,
+            struct_members: 0,
+        }
+    }
+
+    fn is_placeholder(&self) -> bool {
+        self.name.is_empty()
+    }
 }
 
 /// The parsed, owned form of a `TRACE_EVENT_INFO` for one event layout.
 #[derive(Debug, Clone, Default)]
 struct EventLayout {
+    /// Every property TDH reports, positionally aligned with
+    /// `EventPropertyInfoArray` so an index from the schema means the same here.
     properties: Vec<PropertyDesc>,
+    /// How many of those are top level; the rest are members of some struct.
+    top_level_count: usize,
 }
 
 type LayoutKey = (u128, u16, u8);
@@ -203,25 +235,33 @@ unsafe fn read_layout(record: *const EVENT_RECORD) -> Option<EventLayout> {
         unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, size as usize) };
     let info = unsafe { &*info_ptr };
 
-    let count = info.TopLevelPropertyCount as usize;
-    let mut properties = Vec::with_capacity(count);
+    // Walk every property, not just the top-level ones: members of a nested
+    // structure live past `TopLevelPropertyCount`, and `structType` addresses
+    // them by their index into this same array. The vector is therefore kept
+    // positionally aligned with `EventPropertyInfoArray`, with a placeholder for
+    // anything unnamed, so an index from the schema means the same thing here.
+    let total = info.PropertyCount as usize;
+    let top_level_count = (info.TopLevelPropertyCount as usize).min(total);
+    let mut properties = Vec::with_capacity(total);
 
     let array_ptr = std::ptr::addr_of!(info.EventPropertyInfoArray) as *const EVENT_PROPERTY_INFO;
-    for i in 0..count {
+    for i in 0..total {
         let prop = unsafe { &*array_ptr.add(i) };
 
         let Some(name) = wide_string_at(bytes, prop.NameOffset) else {
+            properties.push(PropertyDesc::placeholder());
             continue;
         };
 
         let is_struct = prop.Flags.0 & PROPERTY_STRUCT != 0;
-        // `nonStructType` and `structType` overlay each other; only the former
-        // carries in/out types, and reading it for a struct would be nonsense.
-        let (in_type, out_type) = if is_struct {
-            (IN_NULL, 0)
+        // `nonStructType` and `structType` overlay each other; only one of them
+        // is meaningful, and reading the wrong one would be nonsense.
+        let (in_type, out_type, struct_start, struct_members) = if is_struct {
+            let s = unsafe { prop.Anonymous1.structType };
+            (IN_NULL, 0, s.StructStartIndex, s.NumOfStructMembers)
         } else {
             let non_struct = unsafe { prop.Anonymous1.nonStructType };
-            (non_struct.InType, non_struct.OutType)
+            (non_struct.InType, non_struct.OutType, 0, 0)
         };
 
         // `count` and `countPropertyIndex` overlay each other; the flag says
@@ -242,10 +282,15 @@ unsafe fn read_layout(record: *const EVENT_RECORD) -> Option<EventLayout> {
             out_type,
             is_struct,
             count,
+            struct_start,
+            struct_members,
         });
     }
 
-    Some(EventLayout { properties })
+    Some(EventLayout {
+        properties,
+        top_level_count,
+    })
 }
 
 /// Fetch the layout for this event, consulting and populating the cache.
@@ -269,24 +314,37 @@ fn layout_for(record: &EventRecord, raw: *const EVENT_RECORD) -> Option<Arc<Even
 /// rather than one element of it.
 const WHOLE_PROPERTY: u32 = u32::MAX;
 
-/// Retrieve one property's raw bytes by name.
+/// One link in the path to a value: a property name and which element of it.
 ///
-/// `array_index` selects a single element, or [`WHOLE_PROPERTY`] for all of it.
+/// A top-level property needs a single link. A member of a struct needs two --
+/// the struct, then the member -- and a member of a struct nested inside another
+/// struct needs three, which is exactly the descriptor array TDH expects.
+type PathLink<'a> = (&'a [u16], u32);
+
+/// How deep a nesting of structures we are willing to follow.
+///
+/// Guards against a malformed or hostile schema whose struct members point back
+/// at an enclosing struct, which would otherwise recurse without end.
+const MAX_STRUCT_DEPTH: usize = 8;
+
+/// Retrieve the raw bytes of the value `path` leads to.
 ///
 /// # Safety
 ///
-/// `record` must point to a valid `EVENT_RECORD` that stays alive for the call.
-unsafe fn property_bytes(
-    record: *const EVENT_RECORD,
-    name_utf16: &[u16],
-    array_index: u32,
-) -> Option<Vec<u8>> {
-    let descriptor = PROPERTY_DATA_DESCRIPTOR {
-        PropertyName: name_utf16.as_ptr() as u64,
-        ArrayIndex: array_index,
-        Reserved: 0,
-    };
-    let descriptors = [descriptor];
+/// `record` must point to a valid `EVENT_RECORD` that stays alive for the call,
+/// and every name in `path` must stay alive for it too.
+unsafe fn property_bytes_at(record: *const EVENT_RECORD, path: &[PathLink]) -> Option<Vec<u8>> {
+    if path.is_empty() {
+        return None;
+    }
+    let descriptors: Vec<PROPERTY_DATA_DESCRIPTOR> = path
+        .iter()
+        .map(|(name_utf16, array_index)| PROPERTY_DATA_DESCRIPTOR {
+            PropertyName: name_utf16.as_ptr() as u64,
+            ArrayIndex: *array_index,
+            Reserved: 0,
+        })
+        .collect();
 
     let mut size: u32 = 0;
     let status = unsafe { TdhGetPropertySize(record, None, &descriptors, &mut size) };
@@ -303,6 +361,21 @@ unsafe fn property_bytes(
         return None;
     }
     Some(buf)
+}
+
+/// Retrieve one top-level property's raw bytes by name.
+///
+/// `array_index` selects a single element, or [`WHOLE_PROPERTY`] for all of it.
+///
+/// # Safety
+///
+/// As [`property_bytes_at`].
+unsafe fn property_bytes(
+    record: *const EVENT_RECORD,
+    name_utf16: &[u16],
+    array_index: u32,
+) -> Option<Vec<u8>> {
+    unsafe { property_bytes_at(record, &[(name_utf16, array_index)]) }
 }
 
 /// Decode a UTF-16 blob, trimming a trailing NUL if the provider included one.
@@ -518,23 +591,157 @@ fn read_unsigned(bytes: &[u8]) -> Option<u64> {
 }
 
 /// Resolve how many elements `prop` holds in this particular event.
-fn element_count(record: *const EVENT_RECORD, layout: &EventLayout, prop: &PropertyDesc) -> u32 {
+fn element_count<'a>(
+    record: *const EVENT_RECORD,
+    layout: &'a EventLayout,
+    prop: &PropertyDesc,
+    parent: &[PathLink<'a>],
+) -> u32 {
     let raw_count = match prop.count {
         PropertyCount::Fixed(n) => u32::from(n),
-        PropertyCount::FromProperty(index) => layout
-            .properties
-            .get(index as usize)
-            .and_then(|counter| unsafe {
-                property_bytes(record, &counter.name_utf16, WHOLE_PROPERTY)
-            })
-            .as_deref()
-            .and_then(read_unsigned)
-            .and_then(|n| u32::try_from(n).ok())
-            // A count we cannot read is treated as a plain scalar, which is what
-            // this code did before arrays were handled at all.
-            .unwrap_or(1),
+        PropertyCount::FromProperty(index) => {
+            // `countPropertyIndex` indexes the schema's own property array, and
+            // `layout.properties` is kept aligned with it, so this is the
+            // property the schema meant. An index past the end (or an unnamed
+            // slot) leaves the count at 1.
+            match layout.properties.get(index as usize) {
+                Some(counter) if !counter.is_placeholder() => {
+                    // The counter is a sibling of `prop`, so it is reached
+                    // through the same enclosing struct. Fall back to the top
+                    // level for schemas that point outside the struct.
+                    let mut path = parent.to_vec();
+                    path.push((&counter.name_utf16, leaf_index(parent, 0)));
+                    unsafe { property_bytes_at(record, &path) }
+                        .or_else(|| unsafe {
+                            property_bytes(record, &counter.name_utf16, WHOLE_PROPERTY)
+                        })
+                        .as_deref()
+                        .and_then(read_unsigned)
+                        .and_then(|n| u32::try_from(n).ok())
+                        // A count we cannot read is treated as a plain scalar,
+                        // which is what this code did before arrays existed.
+                        .unwrap_or(1)
+                }
+                _ => 1,
+            }
+        }
     };
     raw_count.min(MAX_ARRAY_ELEMENTS)
+}
+
+/// `ArrayIndex` to use for the last link of a path.
+///
+/// At the top level TDH accepts [`WHOLE_PROPERTY`], which is how a whole array
+/// is fetched in one call. Inside a struct the element has to be named
+/// concretely, so `index` is used instead.
+fn leaf_index(parent: &[PathLink], index: u32) -> u32 {
+    if parent.is_empty() {
+        WHOLE_PROPERTY
+    } else {
+        index
+    }
+}
+
+/// Read one property's value, following `parent` to the enclosing struct
+/// element; `parent` is empty for a top-level property.
+fn read_value<'a>(
+    record: *const EVENT_RECORD,
+    layout: &'a EventLayout,
+    prop: &'a PropertyDesc,
+    parent: &[PathLink<'a>],
+    pointer_size: usize,
+    depth: usize,
+) -> Option<EventValue> {
+    let count = element_count(record, layout, prop, parent);
+
+    if prop.is_struct {
+        // A schema whose members loop back to an enclosing struct would recurse
+        // forever; stop rather than trust it.
+        if depth >= MAX_STRUCT_DEPTH {
+            return None;
+        }
+        if count <= 1 {
+            return read_struct(record, layout, prop, parent, 0, pointer_size, depth);
+        }
+        let mut items = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            let Some(value) = read_struct(record, layout, prop, parent, index, pointer_size, depth)
+            else {
+                break;
+            };
+            items.push(value);
+        }
+        return Some(EventValue::Array(items));
+    }
+
+    if parent.is_empty() {
+        // Top level: fetch the whole property in one call, then split it if it
+        // turns out to be an array. Without the split an array collapsed to its
+        // first element -- a 176-byte array of UInt8 came back as just 228.
+        let bytes = unsafe { property_bytes(record, &prop.name_utf16, WHOLE_PROPERTY) }?;
+        return if count > 1 && !spans_whole_blob(prop.in_type) {
+            to_event_array(record, prop, &bytes, count, pointer_size)
+        } else {
+            to_event_value(&bytes, prop.in_type, prop.out_type, pointer_size)
+        };
+    }
+
+    // Inside a struct every element is addressed explicitly, so there is no
+    // whole-blob shortcut to take.
+    if count > 1 && !spans_whole_blob(prop.in_type) {
+        let mut items = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            let mut path = parent.to_vec();
+            path.push((&prop.name_utf16, index));
+            let Some(bytes) = (unsafe { property_bytes_at(record, &path) }) else {
+                break;
+            };
+            let Some(value) = to_event_value(&bytes, prop.in_type, prop.out_type, pointer_size)
+            else {
+                break;
+            };
+            items.push(value);
+        }
+        return Some(EventValue::Array(items));
+    }
+
+    let mut path = parent.to_vec();
+    path.push((&prop.name_utf16, 0));
+    let bytes = unsafe { property_bytes_at(record, &path) }?;
+    to_event_value(&bytes, prop.in_type, prop.out_type, pointer_size)
+}
+
+/// Read one element of a struct property into a map of member name to value.
+fn read_struct<'a>(
+    record: *const EVENT_RECORD,
+    layout: &'a EventLayout,
+    prop: &'a PropertyDesc,
+    parent: &[PathLink<'a>],
+    index: u32,
+    pointer_size: usize,
+    depth: usize,
+) -> Option<EventValue> {
+    let mut path = parent.to_vec();
+    path.push((&prop.name_utf16, index));
+
+    let start = prop.struct_start as usize;
+    let end = start
+        .saturating_add(prop.struct_members as usize)
+        .min(layout.properties.len());
+    if start >= end {
+        return None;
+    }
+
+    let mut members = HashMap::with_capacity(end - start);
+    for member in &layout.properties[start..end] {
+        if member.is_placeholder() {
+            continue;
+        }
+        if let Some(value) = read_value(record, layout, member, &path, pointer_size, depth + 1) {
+            members.insert(member.name.clone(), value);
+        }
+    }
+    Some(EventValue::Struct(members))
 }
 
 /// Decode a property that carries more than one element.
@@ -605,28 +812,15 @@ pub fn parse_properties(record: &EventRecord) -> HashMap<String, EventValue> {
         8
     };
 
-    let mut out = HashMap::with_capacity(layout.properties.len());
-    for prop in &layout.properties {
-        // Nested structures are left to a follow-up; skipping them keeps the
-        // scalar properties around them intact.
-        if prop.is_struct {
+    // Only the top-level properties become keys of the returned map. The rest of
+    // the vector is the members of those properties' structs, reached through
+    // them rather than reported alongside them.
+    let mut out = HashMap::with_capacity(layout.top_level_count);
+    for prop in layout.properties.iter().take(layout.top_level_count) {
+        if prop.is_placeholder() {
             continue;
         }
-        let Some(bytes) = (unsafe { property_bytes(raw, &prop.name_utf16, WHOLE_PROPERTY) }) else {
-            continue;
-        };
-
-        // Without this, an array collapsed to its first element: the whole blob
-        // was handed to a scalar decoder, so e.g. a 176-byte array of UInt8 came
-        // back as the single number 228.
-        let count = element_count(raw, &layout, prop);
-        let value = if count > 1 && !spans_whole_blob(prop.in_type) {
-            to_event_array(raw, prop, &bytes, count, pointer_size)
-        } else {
-            to_event_value(&bytes, prop.in_type, prop.out_type, pointer_size)
-        };
-
-        if let Some(value) = value {
+        if let Some(value) = read_value(raw, &layout, prop, &[], pointer_size, 0) {
             out.insert(prop.name.clone(), value);
         }
     }
@@ -740,6 +934,8 @@ mod tests {
             out_type: 0,
             is_struct: false,
             count: PropertyCount::Fixed(count),
+            struct_start: 0,
+            struct_members: 0,
         }
     }
 
@@ -795,6 +991,71 @@ mod tests {
         assert!(spans_whole_blob(IN_UNICODECHAR));
         assert!(spans_whole_blob(IN_BINARY));
         assert!(!spans_whole_blob(IN_UINT32));
+    }
+
+    #[test]
+    fn test_leaf_index_depends_on_nesting() {
+        // At the top level a whole array can be fetched in one call; inside a
+        // struct TDH needs the element named explicitly.
+        assert_eq!(leaf_index(&[], 3), WHOLE_PROPERTY);
+        let parent: Vec<PathLink> = vec![(&[0u16], 0)];
+        assert_eq!(leaf_index(&parent, 3), 3);
+    }
+
+    #[test]
+    fn test_placeholder_holds_its_slot_without_being_reported() {
+        let p = PropertyDesc::placeholder();
+        assert!(p.is_placeholder());
+        assert!(!array_desc(IN_UINT32, 1).is_placeholder());
+    }
+
+    #[test]
+    fn test_count_from_an_unnamed_property_falls_back_to_one() {
+        // The counter resolves to a placeholder, so there is no name to fetch by
+        // and the property is treated as a scalar. Reaching TDH here would
+        // dereference the null record, so passing proves it short-circuits.
+        let layout = EventLayout {
+            properties: vec![PropertyDesc::placeholder()],
+            top_level_count: 1,
+        };
+        let mut prop = array_desc(IN_UINT32, 0);
+        prop.count = PropertyCount::FromProperty(0);
+        assert_eq!(element_count(std::ptr::null(), &layout, &prop, &[]), 1);
+    }
+
+    #[test]
+    fn test_count_from_an_out_of_range_index_falls_back_to_one() {
+        // `countPropertyIndex` can point past the top-level properties into
+        // struct members that are not in the vector at all.
+        let layout = EventLayout {
+            properties: vec![PropertyDesc::placeholder()],
+            top_level_count: 1,
+        };
+        let mut prop = array_desc(IN_UINT32, 0);
+        prop.count = PropertyCount::FromProperty(99);
+        assert_eq!(element_count(std::ptr::null(), &layout, &prop, &[]), 1);
+    }
+
+    #[test]
+    fn test_struct_recursion_is_bounded() {
+        // A schema whose struct members point back at the struct would other-
+        // wise recurse forever; the depth guard returns before touching TDH.
+        let mut prop = array_desc(IN_NULL, 1);
+        prop.is_struct = true;
+        prop.struct_members = 1;
+        let layout = EventLayout {
+            properties: vec![prop.clone()],
+            top_level_count: 1,
+        };
+        let value = read_value(
+            std::ptr::null(),
+            &layout,
+            &layout.properties[0],
+            &[],
+            8,
+            MAX_STRUCT_DEPTH,
+        );
+        assert!(value.is_none());
     }
 
     #[test]
