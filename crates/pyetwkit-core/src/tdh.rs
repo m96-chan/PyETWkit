@@ -26,12 +26,16 @@ use crate::event::EventValue;
 use chrono::{TimeZone, Utc};
 use ferrisetw::EventRecord;
 use parking_lot::Mutex;
+use pyo3::prelude::*;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use uuid::Uuid;
+use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::System::Diagnostics::Etw::{
-    TdhGetEventInformation, TdhGetProperty, TdhGetPropertySize, EVENT_PROPERTY_INFO, EVENT_RECORD,
-    PROPERTY_DATA_DESCRIPTOR, TRACE_EVENT_INFO,
+    TdhFormatProperty, TdhGetEventInformation, TdhGetEventMapInformation, TdhGetProperty,
+    TdhGetPropertySize, EVENT_MAP_INFO, EVENT_PROPERTY_INFO, EVENT_RECORD,
+    PROPERTY_DATA_DESCRIPTOR, TDH_CONTEXT, TDH_CONTEXT_WPP_TMFSEARCHPATH, TRACE_EVENT_INFO,
 };
 
 /// `EVENT_HEADER_FLAG_32_BIT_HEADER`, used to pick the pointer width of the
@@ -47,6 +51,9 @@ const PROPERTY_STRUCT: i32 = 1;
 /// `PROPERTY_FLAGS` bit meaning the element count lives in another property
 /// rather than in this one's `count` field.
 const PROPERTY_PARAM_COUNT: i32 = 4;
+
+/// `PROPERTY_FLAGS` bit meaning the byte length lives in another property.
+const PROPERTY_PARAM_LENGTH: i32 = 2;
 
 /// Ceiling on how many elements we will materialise for one array property.
 ///
@@ -113,15 +120,102 @@ struct PropertyDesc {
     out_type: u16,
     is_struct: bool,
     count: PropertyCount,
+    /// For a struct, the index of its first member in [`EventLayout::properties`].
+    struct_start: u16,
+    /// For a struct, how many members follow `struct_start`.
+    struct_members: u16,
+    /// Declared byte length, which `TdhFormatProperty` wants for fixed types.
+    length: u16,
+    /// Name of the value map for this property, if the schema declares one,
+    /// NUL-terminated and ready for `TdhGetEventMapInformation`.
+    map_name: Option<Vec<u16>>,
+}
+
+impl PropertyDesc {
+    /// A stand-in for a property TDH gave no name for.
+    ///
+    /// It occupies the slot so that later properties keep the index the schema
+    /// refers to them by, and is skipped when values are read: an unnamed
+    /// property has no key to store a value under.
+    fn placeholder() -> Self {
+        Self {
+            name: String::new(),
+            name_utf16: Vec::new(),
+            in_type: IN_NULL,
+            out_type: 0,
+            is_struct: false,
+            count: PropertyCount::Fixed(1),
+            struct_start: 0,
+            struct_members: 0,
+            length: 0,
+            map_name: None,
+        }
+    }
+
+    fn is_placeholder(&self) -> bool {
+        self.name.is_empty()
+    }
 }
 
 /// The parsed, owned form of a `TRACE_EVENT_INFO` for one event layout.
 #[derive(Debug, Clone, Default)]
 struct EventLayout {
+    /// Every property TDH reports, positionally aligned with
+    /// `EventPropertyInfoArray` so an index from the schema means the same here.
     properties: Vec<PropertyDesc>,
+    /// How many of those are top level; the rest are members of some struct.
+    top_level_count: usize,
 }
 
 type LayoutKey = (u128, u16, u8);
+
+/// Directory TDH should search for WPP `.tmf` files, NUL-terminated UTF-16.
+///
+/// WPP events carry no schema of their own: the format strings live in a `.tmf`
+/// generated from the emitting binary's PDB. Without one TDH can say nothing
+/// about the event, which is why such events come back with no properties and
+/// only `raw_data`. Given a search path it can decode them.
+fn tmf_search_path() -> &'static Mutex<Option<Vec<u16>>> {
+    static PATH: OnceLock<Mutex<Option<Vec<u16>>>> = OnceLock::new();
+    PATH.get_or_init(|| Mutex::new(None))
+}
+
+/// Point TDH at a directory of WPP `.tmf` files, or pass `None` to stop.
+///
+/// Clears the layout cache, since whether an event has a schema is exactly what
+/// this changes.
+pub fn set_wpp_tmf_search_path(path: Option<&str>) {
+    let encoded = path.map(|p| {
+        let mut utf16: Vec<u16> = p.encode_utf16().collect();
+        utf16.push(0);
+        utf16
+    });
+    *tmf_search_path().lock() = encoded;
+    clear_layout_cache();
+}
+
+/// The directory currently searched for `.tmf` files, if any.
+pub fn wpp_tmf_search_path() -> Option<String> {
+    tmf_search_path().lock().as_ref().map(|utf16| {
+        let end = utf16.iter().position(|&u| u == 0).unwrap_or(utf16.len());
+        String::from_utf16_lossy(&utf16[..end])
+    })
+}
+
+/// Build the `TDH_CONTEXT` array for a decoding call.
+///
+/// Empty unless a TMF search path has been set, so the common path passes TDH
+/// no context at all, exactly as before.
+fn tdh_contexts(path: &Option<Vec<u16>>) -> Vec<TDH_CONTEXT> {
+    match path {
+        Some(utf16) => vec![TDH_CONTEXT {
+            ParameterValue: utf16.as_ptr() as u64,
+            ParameterType: TDH_CONTEXT_WPP_TMFSEARCHPATH,
+            ParameterSize: 0,
+        }],
+        None => Vec::new(),
+    }
+}
 
 /// Cache of event layouts keyed by (provider GUID, event id, version).
 ///
@@ -181,10 +275,15 @@ fn wide_string_at(buf: &[u8], offset: u32) -> Option<String> {
 ///
 /// `record` must point to a valid `EVENT_RECORD` that stays alive for the call.
 unsafe fn read_layout(record: *const EVENT_RECORD) -> Option<EventLayout> {
+    // Held across both calls so the path it points at stays alive for TDH.
+    let path = tmf_search_path().lock();
+    let contexts = tdh_contexts(&path);
+    let contexts = (!contexts.is_empty()).then_some(contexts.as_slice());
+
     let mut size: u32 = 0;
-    let status = unsafe { TdhGetEventInformation(record, None, None, &mut size) };
+    let status = unsafe { TdhGetEventInformation(record, contexts, None, &mut size) };
     if status != ERROR_INSUFFICIENT_BUFFER || size == 0 {
-        // Anything else means TDH has no manifest/MOF schema for this event.
+        // Anything else means TDH has no manifest/MOF/WPP schema for this event.
         return None;
     }
 
@@ -194,7 +293,7 @@ unsafe fn read_layout(record: *const EVENT_RECORD) -> Option<EventLayout> {
     let mut buf: Vec<u64> = vec![0u64; size.div_ceil(8) as usize];
     let info_ptr = buf.as_mut_ptr() as *mut TRACE_EVENT_INFO;
 
-    let status = unsafe { TdhGetEventInformation(record, None, Some(info_ptr), &mut size) };
+    let status = unsafe { TdhGetEventInformation(record, contexts, Some(info_ptr), &mut size) };
     if status != ERROR_SUCCESS {
         return None;
     }
@@ -203,25 +302,48 @@ unsafe fn read_layout(record: *const EVENT_RECORD) -> Option<EventLayout> {
         unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, size as usize) };
     let info = unsafe { &*info_ptr };
 
-    let count = info.TopLevelPropertyCount as usize;
-    let mut properties = Vec::with_capacity(count);
+    // Walk every property, not just the top-level ones: members of a nested
+    // structure live past `TopLevelPropertyCount`, and `structType` addresses
+    // them by their index into this same array. The vector is therefore kept
+    // positionally aligned with `EventPropertyInfoArray`, with a placeholder for
+    // anything unnamed, so an index from the schema means the same thing here.
+    let total = info.PropertyCount as usize;
+    let top_level_count = (info.TopLevelPropertyCount as usize).min(total);
+    let mut properties = Vec::with_capacity(total);
 
     let array_ptr = std::ptr::addr_of!(info.EventPropertyInfoArray) as *const EVENT_PROPERTY_INFO;
-    for i in 0..count {
+    for i in 0..total {
         let prop = unsafe { &*array_ptr.add(i) };
 
         let Some(name) = wide_string_at(bytes, prop.NameOffset) else {
+            properties.push(PropertyDesc::placeholder());
             continue;
         };
 
         let is_struct = prop.Flags.0 & PROPERTY_STRUCT != 0;
-        // `nonStructType` and `structType` overlay each other; only the former
-        // carries in/out types, and reading it for a struct would be nonsense.
-        let (in_type, out_type) = if is_struct {
-            (IN_NULL, 0)
+        // `nonStructType` and `structType` overlay each other; only one of them
+        // is meaningful, and reading the wrong one would be nonsense.
+        let (in_type, out_type, struct_start, struct_members, map_name) = if is_struct {
+            let s = unsafe { prop.Anonymous1.structType };
+            (IN_NULL, 0, s.StructStartIndex, s.NumOfStructMembers, None)
         } else {
             let non_struct = unsafe { prop.Anonymous1.nonStructType };
-            (non_struct.InType, non_struct.OutType)
+            // A map turns a bare number into the name the manifest gives it.
+            let map_name = wide_string_at(bytes, non_struct.MapNameOffset).map(|name| {
+                let mut utf16: Vec<u16> = name.encode_utf16().collect();
+                utf16.push(0);
+                utf16
+            });
+            (non_struct.InType, non_struct.OutType, 0, 0, map_name)
+        };
+
+        // `length` and `lengthPropertyIndex` overlay each other. Only the plain
+        // length is of use here, and only as a hint to `TdhFormatProperty`; the
+        // value bytes themselves always come from TDH.
+        let length = if prop.Flags.0 & PROPERTY_PARAM_LENGTH != 0 {
+            0
+        } else {
+            unsafe { prop.Anonymous3.length }
         };
 
         // `count` and `countPropertyIndex` overlay each other; the flag says
@@ -242,10 +364,17 @@ unsafe fn read_layout(record: *const EVENT_RECORD) -> Option<EventLayout> {
             out_type,
             is_struct,
             count,
+            struct_start,
+            struct_members,
+            length,
+            map_name,
         });
     }
 
-    Some(EventLayout { properties })
+    Some(EventLayout {
+        properties,
+        top_level_count,
+    })
 }
 
 /// Fetch the layout for this event, consulting and populating the cache.
@@ -269,24 +398,37 @@ fn layout_for(record: &EventRecord, raw: *const EVENT_RECORD) -> Option<Arc<Even
 /// rather than one element of it.
 const WHOLE_PROPERTY: u32 = u32::MAX;
 
-/// Retrieve one property's raw bytes by name.
+/// One link in the path to a value: a property name and which element of it.
 ///
-/// `array_index` selects a single element, or [`WHOLE_PROPERTY`] for all of it.
+/// A top-level property needs a single link. A member of a struct needs two --
+/// the struct, then the member -- and a member of a struct nested inside another
+/// struct needs three, which is exactly the descriptor array TDH expects.
+type PathLink<'a> = (&'a [u16], u32);
+
+/// How deep a nesting of structures we are willing to follow.
+///
+/// Guards against a malformed or hostile schema whose struct members point back
+/// at an enclosing struct, which would otherwise recurse without end.
+const MAX_STRUCT_DEPTH: usize = 8;
+
+/// Retrieve the raw bytes of the value `path` leads to.
 ///
 /// # Safety
 ///
-/// `record` must point to a valid `EVENT_RECORD` that stays alive for the call.
-unsafe fn property_bytes(
-    record: *const EVENT_RECORD,
-    name_utf16: &[u16],
-    array_index: u32,
-) -> Option<Vec<u8>> {
-    let descriptor = PROPERTY_DATA_DESCRIPTOR {
-        PropertyName: name_utf16.as_ptr() as u64,
-        ArrayIndex: array_index,
-        Reserved: 0,
-    };
-    let descriptors = [descriptor];
+/// `record` must point to a valid `EVENT_RECORD` that stays alive for the call,
+/// and every name in `path` must stay alive for it too.
+unsafe fn property_bytes_at(record: *const EVENT_RECORD, path: &[PathLink]) -> Option<Vec<u8>> {
+    if path.is_empty() {
+        return None;
+    }
+    let descriptors: Vec<PROPERTY_DATA_DESCRIPTOR> = path
+        .iter()
+        .map(|(name_utf16, array_index)| PROPERTY_DATA_DESCRIPTOR {
+            PropertyName: name_utf16.as_ptr() as u64,
+            ArrayIndex: *array_index,
+            Reserved: 0,
+        })
+        .collect();
 
     let mut size: u32 = 0;
     let status = unsafe { TdhGetPropertySize(record, None, &descriptors, &mut size) };
@@ -303,6 +445,39 @@ unsafe fn property_bytes(
         return None;
     }
     Some(buf)
+}
+
+/// Retrieve one top-level property's raw bytes by name.
+///
+/// `array_index` selects a single element, or [`WHOLE_PROPERTY`] for all of it.
+///
+/// # Safety
+///
+/// As [`property_bytes_at`].
+unsafe fn property_bytes(
+    record: *const EVENT_RECORD,
+    name_utf16: &[u16],
+    array_index: u32,
+) -> Option<Vec<u8>> {
+    unsafe { property_bytes_at(record, &[(name_utf16, array_index)]) }
+}
+
+/// Drop the two-byte length prefix a counted string or blob carries.
+///
+/// TDH returns that prefix as part of the value for the counted in-types, so
+/// without this it is decoded as content: a TraceLogging counted string holding
+/// "core-state" came back as "\u{14}core-state", the `\u{14}` being the 20-byte
+/// length. The prefix is only removed when it actually describes the rest of the
+/// buffer, so a provider or TDH version that hands the value over already
+/// stripped is left alone rather than losing its first character.
+fn strip_counted_prefix(bytes: &[u8]) -> &[u8] {
+    if bytes.len() >= 2 {
+        let declared = u16::from_le_bytes([bytes[0], bytes[1]]) as usize;
+        if declared == bytes.len() - 2 {
+            return &bytes[2..];
+        }
+    }
+    bytes
 }
 
 /// Decode a UTF-16 blob, trimming a trailing NUL if the provider included one.
@@ -420,17 +595,21 @@ fn to_event_value(
     let value = match in_type {
         IN_NULL => EventValue::Null,
 
-        IN_UNICODESTRING
-        | IN_COUNTEDSTRING
-        | IN_NONNULLTERMINATEDSTRING
-        | IN_MANIFEST_COUNTEDSTRING
-        | IN_UNICODECHAR => EventValue::String(decode_utf16(bytes)),
+        IN_UNICODESTRING | IN_NONNULLTERMINATEDSTRING | IN_UNICODECHAR => {
+            EventValue::String(decode_utf16(bytes))
+        }
 
-        IN_ANSISTRING
-        | IN_COUNTEDANSISTRING
-        | IN_NONNULLTERMINATEDANSISTRING
-        | IN_MANIFEST_COUNTEDANSISTRING
-        | IN_ANSICHAR => EventValue::String(decode_ansi(bytes)),
+        IN_COUNTEDSTRING | IN_MANIFEST_COUNTEDSTRING => {
+            EventValue::String(decode_utf16(strip_counted_prefix(bytes)))
+        }
+
+        IN_ANSISTRING | IN_NONNULLTERMINATEDANSISTRING | IN_ANSICHAR => {
+            EventValue::String(decode_ansi(bytes))
+        }
+
+        IN_COUNTEDANSISTRING | IN_MANIFEST_COUNTEDANSISTRING => {
+            EventValue::String(decode_ansi(strip_counted_prefix(bytes)))
+        }
 
         IN_INT8 => EventValue::I8(bytes[0] as i8),
         IN_UINT8 => EventValue::U8(bytes[0]),
@@ -446,7 +625,9 @@ fn to_event_value(
         // A Win32 BOOL is a 32-bit value, not a byte.
         IN_BOOLEAN => EventValue::Bool(fixed!(bytes, u32, 4) != 0),
 
-        IN_BINARY | IN_HEXDUMP | IN_MANIFEST_COUNTEDBINARY => EventValue::Binary(bytes.to_vec()),
+        IN_BINARY | IN_HEXDUMP => EventValue::Binary(bytes.to_vec()),
+
+        IN_MANIFEST_COUNTEDBINARY => EventValue::Binary(strip_counted_prefix(bytes).to_vec()),
 
         IN_GUID => EventValue::Guid(decode_guid(bytes)?),
 
@@ -518,23 +699,157 @@ fn read_unsigned(bytes: &[u8]) -> Option<u64> {
 }
 
 /// Resolve how many elements `prop` holds in this particular event.
-fn element_count(record: *const EVENT_RECORD, layout: &EventLayout, prop: &PropertyDesc) -> u32 {
+fn element_count<'a>(
+    record: *const EVENT_RECORD,
+    layout: &'a EventLayout,
+    prop: &PropertyDesc,
+    parent: &[PathLink<'a>],
+) -> u32 {
     let raw_count = match prop.count {
         PropertyCount::Fixed(n) => u32::from(n),
-        PropertyCount::FromProperty(index) => layout
-            .properties
-            .get(index as usize)
-            .and_then(|counter| unsafe {
-                property_bytes(record, &counter.name_utf16, WHOLE_PROPERTY)
-            })
-            .as_deref()
-            .and_then(read_unsigned)
-            .and_then(|n| u32::try_from(n).ok())
-            // A count we cannot read is treated as a plain scalar, which is what
-            // this code did before arrays were handled at all.
-            .unwrap_or(1),
+        PropertyCount::FromProperty(index) => {
+            // `countPropertyIndex` indexes the schema's own property array, and
+            // `layout.properties` is kept aligned with it, so this is the
+            // property the schema meant. An index past the end (or an unnamed
+            // slot) leaves the count at 1.
+            match layout.properties.get(index as usize) {
+                Some(counter) if !counter.is_placeholder() => {
+                    // The counter is a sibling of `prop`, so it is reached
+                    // through the same enclosing struct. Fall back to the top
+                    // level for schemas that point outside the struct.
+                    let mut path = parent.to_vec();
+                    path.push((&counter.name_utf16, leaf_index(parent, 0)));
+                    unsafe { property_bytes_at(record, &path) }
+                        .or_else(|| unsafe {
+                            property_bytes(record, &counter.name_utf16, WHOLE_PROPERTY)
+                        })
+                        .as_deref()
+                        .and_then(read_unsigned)
+                        .and_then(|n| u32::try_from(n).ok())
+                        // A count we cannot read is treated as a plain scalar,
+                        // which is what this code did before arrays existed.
+                        .unwrap_or(1)
+                }
+                _ => 1,
+            }
+        }
     };
     raw_count.min(MAX_ARRAY_ELEMENTS)
+}
+
+/// `ArrayIndex` to use for the last link of a path.
+///
+/// At the top level TDH accepts [`WHOLE_PROPERTY`], which is how a whole array
+/// is fetched in one call. Inside a struct the element has to be named
+/// concretely, so `index` is used instead.
+fn leaf_index(parent: &[PathLink], index: u32) -> u32 {
+    if parent.is_empty() {
+        WHOLE_PROPERTY
+    } else {
+        index
+    }
+}
+
+/// Read one property's value, following `parent` to the enclosing struct
+/// element; `parent` is empty for a top-level property.
+fn read_value<'a>(
+    record: *const EVENT_RECORD,
+    layout: &'a EventLayout,
+    prop: &'a PropertyDesc,
+    parent: &[PathLink<'a>],
+    pointer_size: usize,
+    depth: usize,
+) -> Option<EventValue> {
+    let count = element_count(record, layout, prop, parent);
+
+    if prop.is_struct {
+        // A schema whose members loop back to an enclosing struct would recurse
+        // forever; stop rather than trust it.
+        if depth >= MAX_STRUCT_DEPTH {
+            return None;
+        }
+        if count <= 1 {
+            return read_struct(record, layout, prop, parent, 0, pointer_size, depth);
+        }
+        let mut items = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            let Some(value) = read_struct(record, layout, prop, parent, index, pointer_size, depth)
+            else {
+                break;
+            };
+            items.push(value);
+        }
+        return Some(EventValue::Array(items));
+    }
+
+    if parent.is_empty() {
+        // Top level: fetch the whole property in one call, then split it if it
+        // turns out to be an array. Without the split an array collapsed to its
+        // first element -- a 176-byte array of UInt8 came back as just 228.
+        let bytes = unsafe { property_bytes(record, &prop.name_utf16, WHOLE_PROPERTY) }?;
+        return if count > 1 && !spans_whole_blob(prop.in_type) {
+            to_event_array(record, prop, &bytes, count, pointer_size)
+        } else {
+            to_event_value(&bytes, prop.in_type, prop.out_type, pointer_size)
+        };
+    }
+
+    // Inside a struct every element is addressed explicitly, so there is no
+    // whole-blob shortcut to take.
+    if count > 1 && !spans_whole_blob(prop.in_type) {
+        let mut items = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            let mut path = parent.to_vec();
+            path.push((&prop.name_utf16, index));
+            let Some(bytes) = (unsafe { property_bytes_at(record, &path) }) else {
+                break;
+            };
+            let Some(value) = to_event_value(&bytes, prop.in_type, prop.out_type, pointer_size)
+            else {
+                break;
+            };
+            items.push(value);
+        }
+        return Some(EventValue::Array(items));
+    }
+
+    let mut path = parent.to_vec();
+    path.push((&prop.name_utf16, 0));
+    let bytes = unsafe { property_bytes_at(record, &path) }?;
+    to_event_value(&bytes, prop.in_type, prop.out_type, pointer_size)
+}
+
+/// Read one element of a struct property into a map of member name to value.
+fn read_struct<'a>(
+    record: *const EVENT_RECORD,
+    layout: &'a EventLayout,
+    prop: &'a PropertyDesc,
+    parent: &[PathLink<'a>],
+    index: u32,
+    pointer_size: usize,
+    depth: usize,
+) -> Option<EventValue> {
+    let mut path = parent.to_vec();
+    path.push((&prop.name_utf16, index));
+
+    let start = prop.struct_start as usize;
+    let end = start
+        .saturating_add(prop.struct_members as usize)
+        .min(layout.properties.len());
+    if start >= end {
+        return None;
+    }
+
+    let mut members = HashMap::with_capacity(end - start);
+    for member in &layout.properties[start..end] {
+        if member.is_placeholder() {
+            continue;
+        }
+        if let Some(value) = read_value(record, layout, member, &path, pointer_size, depth + 1) {
+            members.insert(member.name.clone(), value);
+        }
+    }
+    Some(EventValue::Struct(members))
 }
 
 /// Decode a property that carries more than one element.
@@ -588,6 +903,240 @@ fn to_event_array(
     Some(EventValue::Array(items))
 }
 
+/// Whether events should also carry TDH's own display strings.
+///
+/// Off by default: typed values are what the exporters want, and rendering every
+/// property twice costs a `TdhGetEventInformation` plus a `TdhFormatProperty`
+/// per property on top of the parse.
+static FORMAT_PROPERTIES: AtomicBool = AtomicBool::new(false);
+
+/// Turn TDH's display strings on or off for events parsed from now on.
+pub fn set_property_formatting(enabled: bool) {
+    FORMAT_PROPERTIES.store(enabled, Ordering::Relaxed);
+}
+
+/// Whether TDH display strings are currently being produced.
+pub fn property_formatting() -> bool {
+    FORMAT_PROPERTIES.load(Ordering::Relaxed)
+}
+
+/// Look up the value map named by a property, if it has one.
+///
+/// A map turns a bare number into the name the manifest gives it, which is the
+/// part of `TdhFormatProperty`'s output that typed values cannot express.
+///
+/// # Safety
+///
+/// `record` must point to a valid `EVENT_RECORD` that stays alive for the call.
+unsafe fn map_info(record: *const EVENT_RECORD, map_name: &[u16]) -> Option<Vec<u64>> {
+    let name = PCWSTR(map_name.as_ptr());
+    let mut size: u32 = 0;
+    let status = unsafe { TdhGetEventMapInformation(record, name, None, &mut size) };
+    if status != ERROR_INSUFFICIENT_BUFFER || size == 0 {
+        return None;
+    }
+    // Over-aligned for the same reason as TRACE_EVENT_INFO.
+    let mut buf: Vec<u64> = vec![0u64; size.div_ceil(8) as usize];
+    let ptr = buf.as_mut_ptr() as *mut EVENT_MAP_INFO;
+    let status = unsafe { TdhGetEventMapInformation(record, name, Some(ptr), &mut size) };
+    if status != ERROR_SUCCESS {
+        return None;
+    }
+    Some(buf)
+}
+
+/// Render one already-isolated property value the way TDH would display it.
+///
+/// The bytes come from `TdhGetProperty`, so this hands `TdhFormatProperty` a
+/// single value rather than walking the event payload with running offsets. That
+/// walk is the part the rest of this module avoids on purpose, and skipping it
+/// costs nothing here because TDH has already found the value for us.
+///
+/// # Safety
+///
+/// `info` must point to the `TRACE_EVENT_INFO` describing this event.
+unsafe fn format_one(
+    info: *const TRACE_EVENT_INFO,
+    map: Option<*const EVENT_MAP_INFO>,
+    pointer_size: usize,
+    prop: &PropertyDesc,
+    bytes: &[u8],
+) -> Option<String> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let length = if prop.length != 0 {
+        prop.length
+    } else {
+        u16::try_from(bytes.len()).ok()?
+    };
+
+    let mut size: u32 = 0;
+    let mut consumed: u16 = 0;
+    let status = unsafe {
+        TdhFormatProperty(
+            info,
+            map,
+            pointer_size as u32,
+            prop.in_type,
+            prop.out_type,
+            length,
+            bytes,
+            &mut size,
+            None,
+            &mut consumed,
+        )
+    };
+    if status != ERROR_INSUFFICIENT_BUFFER || size == 0 {
+        return None;
+    }
+
+    let mut out: Vec<u16> = vec![0u16; (size as usize).div_ceil(2)];
+    let status = unsafe {
+        TdhFormatProperty(
+            info,
+            map,
+            pointer_size as u32,
+            prop.in_type,
+            prop.out_type,
+            length,
+            bytes,
+            &mut size,
+            Some(PWSTR(out.as_mut_ptr())),
+            &mut consumed,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return None;
+    }
+
+    let end = out.iter().position(|&u| u == 0).unwrap_or(out.len());
+    Some(String::from_utf16_lossy(&out[..end]))
+}
+
+/// The event's raw user data, copied out of the `EVENT_RECORD`.
+///
+/// ferrisetw keeps its own `user_buffer` crate-private, which is why
+/// `EtwEvent.raw_data` went unpopulated; the record TDH is handed carries the
+/// same bytes, so read them from there.
+pub fn raw_user_data(record: &EventRecord) -> Option<Vec<u8>> {
+    let raw = as_raw_record(record);
+    // Safety: `record` is a live `EVENT_RECORD` for the duration of the call,
+    // and `UserDataLength` is the length ETW itself recorded for `UserData`.
+    unsafe {
+        let len = (*raw).UserDataLength as usize;
+        let ptr = (*raw).UserData as *const u8;
+        if len == 0 || ptr.is_null() {
+            return None;
+        }
+        Some(std::slice::from_raw_parts(ptr, len).to_vec())
+    }
+}
+
+/// Render each top-level property the way TDH itself would display it.
+///
+/// This is the string view #72 asks about, offered alongside the typed values
+/// rather than instead of them: typed values are what the Parquet/Arrow
+/// exporters need, while these are what a human reading a trace wants, because
+/// TDH resolves value maps here -- a bare `1` becomes the name the manifest
+/// gives it.
+///
+/// Empty unless [`set_property_formatting`] has been called, and empty for
+/// events TDH has no schema for. Struct-typed properties are skipped: their
+/// members are values in their own right, and a single string for the whole
+/// struct would be less useful than the typed map already returned.
+pub fn format_properties(record: &EventRecord) -> HashMap<String, String> {
+    if !property_formatting() {
+        return HashMap::new();
+    }
+    let raw = as_raw_record(record);
+    let Some(layout) = layout_for(record, raw) else {
+        return HashMap::new();
+    };
+
+    // `TdhFormatProperty` wants the TRACE_EVENT_INFO itself, which the cache
+    // deliberately does not retain -- keeping every event's raw schema buffer
+    // alive would cost far more than re-reading it on the opt-in path.
+    let Some(mut info_buf) = (unsafe { read_event_information(raw) }) else {
+        return HashMap::new();
+    };
+    let info = info_buf.as_mut_ptr() as *const TRACE_EVENT_INFO;
+
+    let pointer_size = pointer_size_of(record);
+
+    let mut out = HashMap::with_capacity(layout.top_level_count);
+    for prop in layout.properties.iter().take(layout.top_level_count) {
+        if prop.is_placeholder() || prop.is_struct {
+            continue;
+        }
+        // `TdhFormatProperty` renders one value, so handing it a whole array
+        // would silently describe only the first element. Arrays and structs are
+        // both left to `properties`, which reports every element.
+        let count = element_count(raw, &layout, prop, &[]);
+        if count > 1 && !spans_whole_blob(prop.in_type) {
+            continue;
+        }
+        let Some(bytes) = (unsafe { property_bytes(raw, &prop.name_utf16, WHOLE_PROPERTY) }) else {
+            continue;
+        };
+        let map_buf = prop
+            .map_name
+            .as_ref()
+            .and_then(|name| unsafe { map_info(raw, name) });
+        let map = map_buf
+            .as_ref()
+            .map(|b| b.as_ptr() as *const EVENT_MAP_INFO);
+
+        if let Some(text) = unsafe { format_one(info, map, pointer_size, prop, &bytes) } {
+            out.insert(prop.name.clone(), text);
+        }
+    }
+    out
+}
+
+/// Pointer width of the process that emitted the event, not of this one.
+fn pointer_size_of(record: &EventRecord) -> usize {
+    if record.event_flags() & EVENT_HEADER_FLAG_32_BIT_HEADER != 0 {
+        4
+    } else {
+        8
+    }
+}
+
+/// Fetch the raw `TRACE_EVENT_INFO` for an event, over-aligned.
+///
+/// # Safety
+///
+/// `record` must point to a valid `EVENT_RECORD` that stays alive for the call.
+unsafe fn read_event_information(record: *const EVENT_RECORD) -> Option<Vec<u64>> {
+    let path = tmf_search_path().lock();
+    let contexts = tdh_contexts(&path);
+    let contexts = (!contexts.is_empty()).then_some(contexts.as_slice());
+
+    let mut size: u32 = 0;
+    let status = unsafe { TdhGetEventInformation(record, contexts, None, &mut size) };
+    if status != ERROR_INSUFFICIENT_BUFFER || size == 0 {
+        return None;
+    }
+    let mut buf: Vec<u64> = vec![0u64; size.div_ceil(8) as usize];
+    let ptr = buf.as_mut_ptr() as *mut TRACE_EVENT_INFO;
+    let status = unsafe { TdhGetEventInformation(record, contexts, Some(ptr), &mut size) };
+    if status != ERROR_SUCCESS {
+        return None;
+    }
+    Some(buf)
+}
+
+/// Whether TDH can describe this event at all.
+///
+/// False for WPP without a matching TMF, and for manifest providers whose
+/// manifest is not installed on this machine. Those events have no property
+/// names to report, so their payload is only reachable as raw bytes.
+pub fn has_schema(record: &EventRecord) -> bool {
+    let raw = as_raw_record(record);
+    layout_for(record, raw).is_some()
+}
+
 /// Parse every top-level property of an event.
 ///
 /// Returns an empty map when TDH has no schema for the event, which is normal
@@ -605,37 +1154,113 @@ pub fn parse_properties(record: &EventRecord) -> HashMap<String, EventValue> {
         8
     };
 
-    let mut out = HashMap::with_capacity(layout.properties.len());
-    for prop in &layout.properties {
-        // Nested structures are left to a follow-up; skipping them keeps the
-        // scalar properties around them intact.
-        if prop.is_struct {
+    // Only the top-level properties become keys of the returned map. The rest of
+    // the vector is the members of those properties' structs, reached through
+    // them rather than reported alongside them.
+    let mut out = HashMap::with_capacity(layout.top_level_count);
+    for prop in layout.properties.iter().take(layout.top_level_count) {
+        if prop.is_placeholder() {
             continue;
         }
-        let Some(bytes) = (unsafe { property_bytes(raw, &prop.name_utf16, WHOLE_PROPERTY) }) else {
-            continue;
-        };
-
-        // Without this, an array collapsed to its first element: the whole blob
-        // was handed to a scalar decoder, so e.g. a 176-byte array of UInt8 came
-        // back as the single number 228.
-        let count = element_count(raw, &layout, prop);
-        let value = if count > 1 && !spans_whole_blob(prop.in_type) {
-            to_event_array(raw, prop, &bytes, count, pointer_size)
-        } else {
-            to_event_value(&bytes, prop.in_type, prop.out_type, pointer_size)
-        };
-
-        if let Some(value) = value {
+        if let Some(value) = read_value(raw, &layout, prop, &[], pointer_size, 0) {
             out.insert(prop.name.clone(), value);
         }
     }
     out
 }
 
+/// Turn TDH's display strings on or off for events parsed from now on.
+///
+/// Off by default. Typed values stay in `properties` either way; this only adds
+/// `formatted_properties`, and costs an extra TDH round trip per property.
+#[pyfunction]
+pub fn py_set_property_formatting(enabled: bool) {
+    set_property_formatting(enabled);
+}
+
+/// Whether TDH display strings are currently being produced.
+#[pyfunction]
+pub fn py_property_formatting() -> bool {
+    property_formatting()
+}
+
+/// Point TDH at a directory of WPP `.tmf` files, or pass `None` to stop.
+///
+/// WPP events carry no schema of their own, so without a matching `.tmf` they
+/// arrive with no properties and only `raw_data`. Clears the schema cache.
+#[pyfunction]
+#[pyo3(signature = (path=None))]
+pub fn py_set_wpp_tmf_search_path(path: Option<&str>) {
+    set_wpp_tmf_search_path(path);
+}
+
+/// The directory currently searched for `.tmf` files, if any.
+#[pyfunction]
+pub fn py_wpp_tmf_search_path() -> Option<String> {
+    wpp_tmf_search_path()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_counted_string_drops_its_length_prefix() {
+        // TDH hands the two-byte count back as part of the value, so without
+        // stripping it "core-state" decoded as "\u{14}core-state".
+        let mut bytes = 20u16.to_le_bytes().to_vec();
+        bytes.extend("core-state".encode_utf16().flat_map(u16::to_le_bytes));
+        let v = to_event_value(&bytes, IN_COUNTEDSTRING, 0, 8);
+        assert!(matches!(v, Some(EventValue::String(s)) if s == "core-state"));
+    }
+
+    #[test]
+    fn test_plain_string_keeps_every_character() {
+        // A non-counted type must never lose its first character to the strip.
+        let bytes: Vec<u8> = "core-state"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        let v = to_event_value(&bytes, IN_UNICODESTRING, 0, 8);
+        assert!(matches!(v, Some(EventValue::String(s)) if s == "core-state"));
+    }
+
+    #[test]
+    fn test_counted_prefix_is_left_alone_when_it_does_not_fit() {
+        // Only a prefix that actually describes the rest of the buffer is a
+        // length, so a value TDH already stripped survives intact.
+        let bytes: Vec<u8> = "ab".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        assert_eq!(strip_counted_prefix(&bytes), bytes.as_slice());
+    }
+
+    #[test]
+    fn test_property_formatting_is_off_by_default_and_togglable() {
+        assert!(!property_formatting());
+        set_property_formatting(true);
+        assert!(property_formatting());
+        set_property_formatting(false);
+        assert!(!property_formatting());
+    }
+
+    #[test]
+    fn test_tmf_search_path_round_trips() {
+        assert_eq!(wpp_tmf_search_path(), None);
+        set_wpp_tmf_search_path(Some(r"C:\tmf"));
+        assert_eq!(wpp_tmf_search_path().as_deref(), Some(r"C:\tmf"));
+        set_wpp_tmf_search_path(None);
+        assert_eq!(wpp_tmf_search_path(), None);
+    }
+
+    #[test]
+    fn test_no_tmf_path_means_no_tdh_context() {
+        // The common path must hand TDH nothing, exactly as before the WPP
+        // search path existed.
+        assert!(tdh_contexts(&None).is_empty());
+        let path: Vec<u16> = "x\0".encode_utf16().collect();
+        let contexts = tdh_contexts(&Some(path));
+        assert_eq!(contexts.len(), 1);
+        assert_eq!(contexts[0].ParameterType, TDH_CONTEXT_WPP_TMFSEARCHPATH);
+    }
 
     #[test]
     fn test_decode_utf16_trims_trailing_nul() {
@@ -740,6 +1365,10 @@ mod tests {
             out_type: 0,
             is_struct: false,
             count: PropertyCount::Fixed(count),
+            struct_start: 0,
+            struct_members: 0,
+            length: 0,
+            map_name: None,
         }
     }
 
@@ -795,6 +1424,71 @@ mod tests {
         assert!(spans_whole_blob(IN_UNICODECHAR));
         assert!(spans_whole_blob(IN_BINARY));
         assert!(!spans_whole_blob(IN_UINT32));
+    }
+
+    #[test]
+    fn test_leaf_index_depends_on_nesting() {
+        // At the top level a whole array can be fetched in one call; inside a
+        // struct TDH needs the element named explicitly.
+        assert_eq!(leaf_index(&[], 3), WHOLE_PROPERTY);
+        let parent: Vec<PathLink> = vec![(&[0u16], 0)];
+        assert_eq!(leaf_index(&parent, 3), 3);
+    }
+
+    #[test]
+    fn test_placeholder_holds_its_slot_without_being_reported() {
+        let p = PropertyDesc::placeholder();
+        assert!(p.is_placeholder());
+        assert!(!array_desc(IN_UINT32, 1).is_placeholder());
+    }
+
+    #[test]
+    fn test_count_from_an_unnamed_property_falls_back_to_one() {
+        // The counter resolves to a placeholder, so there is no name to fetch by
+        // and the property is treated as a scalar. Reaching TDH here would
+        // dereference the null record, so passing proves it short-circuits.
+        let layout = EventLayout {
+            properties: vec![PropertyDesc::placeholder()],
+            top_level_count: 1,
+        };
+        let mut prop = array_desc(IN_UINT32, 0);
+        prop.count = PropertyCount::FromProperty(0);
+        assert_eq!(element_count(std::ptr::null(), &layout, &prop, &[]), 1);
+    }
+
+    #[test]
+    fn test_count_from_an_out_of_range_index_falls_back_to_one() {
+        // `countPropertyIndex` can point past the top-level properties into
+        // struct members that are not in the vector at all.
+        let layout = EventLayout {
+            properties: vec![PropertyDesc::placeholder()],
+            top_level_count: 1,
+        };
+        let mut prop = array_desc(IN_UINT32, 0);
+        prop.count = PropertyCount::FromProperty(99);
+        assert_eq!(element_count(std::ptr::null(), &layout, &prop, &[]), 1);
+    }
+
+    #[test]
+    fn test_struct_recursion_is_bounded() {
+        // A schema whose struct members point back at the struct would other-
+        // wise recurse forever; the depth guard returns before touching TDH.
+        let mut prop = array_desc(IN_NULL, 1);
+        prop.is_struct = true;
+        prop.struct_members = 1;
+        let layout = EventLayout {
+            properties: vec![prop.clone()],
+            top_level_count: 1,
+        };
+        let value = read_value(
+            std::ptr::null(),
+            &layout,
+            &layout.properties[0],
+            &[],
+            8,
+            MAX_STRUCT_DEPTH,
+        );
+        assert!(value.is_none());
     }
 
     #[test]

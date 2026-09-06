@@ -364,7 +364,17 @@ pub fn parse_event_record(record: &EventRecord, schema: Option<&Schema>) -> EtwE
     if let Some(schema) = schema {
         event.provider_name = Some(schema.provider_name().to_string());
     }
-    // Note: raw_data extraction removed as user_buffer is private in ferrisetw 1.2
+
+    // When TDH has no schema -- WPP with no matching TMF, or a manifest that is
+    // not installed here -- there are no names to report a payload under, and
+    // the payload used to be dropped entirely. Keep the bytes instead, so the
+    // event is at least recoverable. Only in that case: carrying a second copy
+    // of every decoded event's data would be a memory cost for nothing.
+    event.formatted_properties = crate::tdh::format_properties(record);
+
+    if event.properties.is_empty() && !crate::tdh::has_schema(record) {
+        event.raw_data = crate::tdh::raw_user_data(record);
+    }
 
     event
 }
