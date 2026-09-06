@@ -42,6 +42,8 @@ pub struct EtwEvent {
     pub properties: HashMap<String, EventValue>,
     /// Raw event data (if schema parsing failed)
     pub raw_data: Option<Vec<u8>>,
+    /// TDH's own display strings, populated only when property formatting is on
+    pub formatted_properties: HashMap<String, String>,
     /// Stack trace (if enabled)
     pub stack_trace: Option<Vec<u64>>,
 }
@@ -93,6 +95,7 @@ impl EtwEvent {
             channel: 0,
             properties: HashMap::new(),
             raw_data: None,
+            formatted_properties: HashMap::new(),
             stack_trace: None,
         }
     }
@@ -288,6 +291,39 @@ impl PyEtwEvent {
     #[getter]
     fn channel(&self) -> u8 {
         self.inner.channel
+    }
+
+    /// Undecoded payload, present only when TDH could not describe the event.
+    ///
+    /// WPP events with no matching TMF, and manifest providers whose manifest is
+    /// not installed on this machine, have no property names to report a value
+    /// under. `properties` is empty for those, and this carries the bytes so the
+    /// payload is still recoverable. `None` whenever the event decoded normally.
+    #[getter]
+    fn raw_data(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        use pyo3::IntoPyObject;
+        match &self.inner.raw_data {
+            Some(bytes) => Ok(Some(
+                bytes.as_slice().into_pyobject(py)?.into_any().unbind(),
+            )),
+            None => Ok(None),
+        }
+    }
+
+    /// TDH's own display strings for each property, name to text.
+    ///
+    /// Empty unless property formatting has been switched on, and empty for
+    /// events TDH has no schema for. These differ from `properties` in that TDH
+    /// resolves the manifest's value maps, so a bare number becomes the name the
+    /// manifest gives it. Struct-typed properties are absent: their members are
+    /// values in their own right and `properties` already reports them.
+    #[getter]
+    fn formatted_properties(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
+        let dict = PyDict::new(py);
+        for (key, value) in &self.inner.formatted_properties {
+            dict.set_item(key, value)?;
+        }
+        Ok(dict.into())
     }
 
     /// Get event properties as a dictionary

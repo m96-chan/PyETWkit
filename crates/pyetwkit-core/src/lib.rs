@@ -71,6 +71,26 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
         wrap_pyfunction!(discovery::py_get_provider_info, m)?,
     )?;
 
+    // Property formatting toggle
+    m.add(
+        "set_property_formatting",
+        wrap_pyfunction!(tdh::py_set_property_formatting, m)?,
+    )?;
+    m.add(
+        "property_formatting",
+        wrap_pyfunction!(tdh::py_property_formatting, m)?,
+    )?;
+
+    // WPP decoding needs a directory of .tmf files to consult
+    m.add(
+        "set_wpp_tmf_search_path",
+        wrap_pyfunction!(tdh::py_set_wpp_tmf_search_path, m)?,
+    )?;
+    m.add(
+        "wpp_tmf_search_path",
+        wrap_pyfunction!(tdh::py_wpp_tmf_search_path, m)?,
+    )?;
+
     // Register ETL reader
     m.add_class::<etl_reader::PyEtlReader>()?;
 
