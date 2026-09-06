@@ -240,9 +240,16 @@ class TestNestedStructProperties:
     """Regression tests for properties whose type is a nested structure.
 
     ``sample.etl`` cannot cover these: Microsoft-Windows-Kernel-Process declares
-    no struct-typed property. ``nested_struct.etl`` is a short capture of
-    Kernel-Processor-Power core-parking events, which carry several
-    (see ``fixtures/create_nested_struct_etl.ps1``).
+    no struct-typed property. ``nested_struct.etl`` holds events from a
+    TraceLogging provider defined by ``fixtures/create_nested_struct_etl.ps1``,
+    each carrying two ``{ Number, Affinity }`` structs.
+
+    TraceLogging matters here rather than being an implementation detail: such
+    events embed their schema, so the fixture decodes identically anywhere. A
+    capture from a manifest provider does not -- decoding needs that manifest
+    installed and of a matching version, so an earlier version of this fixture,
+    taken from Kernel-Processor-Power, decoded on the machine that recorded it
+    and produced nothing at all in CI on a different Windows build.
     """
 
     @pytest.mark.skipif(
@@ -266,10 +273,27 @@ class TestNestedStructProperties:
             "were supported these were skipped outright"
         )
 
-        # Every core-parking affinity struct is a { Number, Affinity } pair.
-        assert "NewPark" in structs, sorted(structs)
-        assert set(structs["NewPark"]) == {"Number", "Affinity"}
-        assert all(isinstance(v, int) for v in structs["NewPark"].values())
+        # Both structs in the fixture are a { Number, Affinity } pair.
+        assert "Park" in structs, sorted(structs)
+        assert set(structs["Park"]) == {"Number", "Affinity"}
+        assert structs["Park"] == {"Number": 7, "Affinity": 0x50C0}
+        assert structs["Unpark"] == {"Number": 9, "Affinity": 0x000F}
+
+    @pytest.mark.skipif(
+        not NESTED_STRUCT_ETL_PATH.exists(), reason="Requires nested-struct ETL file"
+    )
+    def test_counted_string_has_no_length_prefix_in_its_value(self) -> None:
+        """TDH returns the count as part of the value; it is not content.
+
+        The fixture's ``Label`` is a counted string, which decoded as
+        ``'\\x14core-state'`` -- the ``\\x14`` being its own 20-byte length.
+        """
+        from pyetwkit import _core as pyetwkit_core
+
+        events = pyetwkit_core.EtlReader(str(NESTED_STRUCT_ETL_PATH)).read_all()
+        labels = {e.properties["Label"] for e in events if "Label" in e.properties}
+        assert labels, "fixture no longer carries a Label property"
+        assert labels == {"core-state"}
 
     @pytest.mark.skipif(
         not NESTED_STRUCT_ETL_PATH.exists(), reason="Requires nested-struct ETL file"
@@ -287,12 +311,12 @@ class TestNestedStructProperties:
 
         for event in events:
             props = event.properties
-            if "NewPark" not in props:
+            if "Park" not in props:
                 continue
             assert "Affinity" not in props
             assert "Number" not in props
             return
-        pytest.fail("no event carried a NewPark struct")
+        pytest.fail("no event carried a Park struct")
 
     @pytest.mark.skipif(
         not NESTED_STRUCT_ETL_PATH.exists(), reason="Requires nested-struct ETL file"
