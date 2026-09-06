@@ -246,3 +246,40 @@ class TestDashboardIntegration:
 
         dashboard = Dashboard(host="localhost", port=8080)
         assert dashboard.ws_url == "ws://localhost:8080/ws"
+
+
+class TestDashboardExtra:
+    """The `dashboard` extra must declare what dashboard.py imports.
+
+    `_create_gradio_app` guards its gradio import and then imports pandas
+    unguarded. That works only because gradio happens to depend on pandas, so
+    the extra has been relying on another package's dependency list. If gradio
+    ever drops it, the failure is a bare ModuleNotFoundError with an unhelpful
+    "pip install pyetwkit[dashboard]" already satisfied.
+    """
+
+    def test_extra_declares_every_package_the_dashboard_imports(self) -> None:
+        import importlib.metadata
+        import re
+
+        requires = importlib.metadata.requires("pyetwkit") or []
+        # The marker is quoted differently depending on which build produced the
+        # metadata, so match either form rather than one of them.
+        marker = re.compile(r"""extra\s*==\s*['"]dashboard['"]""")
+        declared = {
+            re.split(r"[<>=!~\[ ;]", requirement)[0].strip().lower()
+            for requirement in requires
+            if marker.search(requirement)
+        }
+
+        assert "gradio" in declared, sorted(declared)
+        assert "pandas" in declared, (
+            "dashboard.py imports pandas unguarded, so the dashboard extra has "
+            f"to declare it. Declared: {sorted(declared)}"
+        )
+
+    def test_dashboard_module_imports_without_the_extra(self) -> None:
+        """Only `_create_gradio_app` needs gradio; importing must not."""
+        from pyetwkit.dashboard import Dashboard
+
+        assert Dashboard is not None
