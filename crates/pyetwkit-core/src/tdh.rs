@@ -378,6 +378,24 @@ unsafe fn property_bytes(
     unsafe { property_bytes_at(record, &[(name_utf16, array_index)]) }
 }
 
+/// Drop the two-byte length prefix a counted string or blob carries.
+///
+/// TDH returns that prefix as part of the value for the counted in-types, so
+/// without this it is decoded as content: a TraceLogging counted string holding
+/// "core-state" came back as "\u{14}core-state", the `\u{14}` being the 20-byte
+/// length. The prefix is only removed when it actually describes the rest of the
+/// buffer, so a provider or TDH version that hands the value over already
+/// stripped is left alone rather than losing its first character.
+fn strip_counted_prefix(bytes: &[u8]) -> &[u8] {
+    if bytes.len() >= 2 {
+        let declared = u16::from_le_bytes([bytes[0], bytes[1]]) as usize;
+        if declared == bytes.len() - 2 {
+            return &bytes[2..];
+        }
+    }
+    bytes
+}
+
 /// Decode a UTF-16 blob, trimming a trailing NUL if the provider included one.
 fn decode_utf16(bytes: &[u8]) -> String {
     let (pairs, _) = bytes.as_chunks::<2>();
@@ -493,17 +511,21 @@ fn to_event_value(
     let value = match in_type {
         IN_NULL => EventValue::Null,
 
-        IN_UNICODESTRING
-        | IN_COUNTEDSTRING
-        | IN_NONNULLTERMINATEDSTRING
-        | IN_MANIFEST_COUNTEDSTRING
-        | IN_UNICODECHAR => EventValue::String(decode_utf16(bytes)),
+        IN_UNICODESTRING | IN_NONNULLTERMINATEDSTRING | IN_UNICODECHAR => {
+            EventValue::String(decode_utf16(bytes))
+        }
 
-        IN_ANSISTRING
-        | IN_COUNTEDANSISTRING
-        | IN_NONNULLTERMINATEDANSISTRING
-        | IN_MANIFEST_COUNTEDANSISTRING
-        | IN_ANSICHAR => EventValue::String(decode_ansi(bytes)),
+        IN_COUNTEDSTRING | IN_MANIFEST_COUNTEDSTRING => {
+            EventValue::String(decode_utf16(strip_counted_prefix(bytes)))
+        }
+
+        IN_ANSISTRING | IN_NONNULLTERMINATEDANSISTRING | IN_ANSICHAR => {
+            EventValue::String(decode_ansi(bytes))
+        }
+
+        IN_COUNTEDANSISTRING | IN_MANIFEST_COUNTEDANSISTRING => {
+            EventValue::String(decode_ansi(strip_counted_prefix(bytes)))
+        }
 
         IN_INT8 => EventValue::I8(bytes[0] as i8),
         IN_UINT8 => EventValue::U8(bytes[0]),
@@ -519,7 +541,9 @@ fn to_event_value(
         // A Win32 BOOL is a 32-bit value, not a byte.
         IN_BOOLEAN => EventValue::Bool(fixed!(bytes, u32, 4) != 0),
 
-        IN_BINARY | IN_HEXDUMP | IN_MANIFEST_COUNTEDBINARY => EventValue::Binary(bytes.to_vec()),
+        IN_BINARY | IN_HEXDUMP => EventValue::Binary(bytes.to_vec()),
+
+        IN_MANIFEST_COUNTEDBINARY => EventValue::Binary(strip_counted_prefix(bytes).to_vec()),
 
         IN_GUID => EventValue::Guid(decode_guid(bytes)?),
 
@@ -830,6 +854,35 @@ pub fn parse_properties(record: &EventRecord) -> HashMap<String, EventValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_counted_string_drops_its_length_prefix() {
+        // TDH hands the two-byte count back as part of the value, so without
+        // stripping it "core-state" decoded as "\u{14}core-state".
+        let mut bytes = 20u16.to_le_bytes().to_vec();
+        bytes.extend("core-state".encode_utf16().flat_map(u16::to_le_bytes));
+        let v = to_event_value(&bytes, IN_COUNTEDSTRING, 0, 8);
+        assert!(matches!(v, Some(EventValue::String(s)) if s == "core-state"));
+    }
+
+    #[test]
+    fn test_plain_string_keeps_every_character() {
+        // A non-counted type must never lose its first character to the strip.
+        let bytes: Vec<u8> = "core-state"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        let v = to_event_value(&bytes, IN_UNICODESTRING, 0, 8);
+        assert!(matches!(v, Some(EventValue::String(s)) if s == "core-state"));
+    }
+
+    #[test]
+    fn test_counted_prefix_is_left_alone_when_it_does_not_fit() {
+        // Only a prefix that actually describes the rest of the buffer is a
+        // length, so a value TDH already stripped survives intact.
+        let bytes: Vec<u8> = "ab".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        assert_eq!(strip_counted_prefix(&bytes), bytes.as_slice());
+    }
 
     #[test]
     fn test_decode_utf16_trims_trailing_nul() {
