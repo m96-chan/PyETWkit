@@ -198,8 +198,19 @@ jobs:
             Write-Host "ERROR: No wheel found for $pyVer"
             exit 1
           }
-          Write-Host "Installing wheel: $($wheel.FullName)"
-          uv pip install "$($wheel.FullName)"
+          # Install with the export extra, so the pandas/pyarrow exporters are
+          # actually exercised rather than skipped. Taking the extra from the
+          # wheel keeps its contents defined in pyproject.toml alone.
+          Write-Host "Installing wheel: $($wheel.FullName)[export]"
+          uv pip install "$($wheel.FullName)[export]"
+        shell: pwsh
+
+      - name: Confirm the export extra is present
+        # The exporters are a documented feature, and their tests skip
+        # themselves when pandas or pyarrow is missing. Fail here rather than
+        # let that turn into silent non-coverage.
+        run: |
+          & .\.venv\Scripts\python.exe -c "import pandas, pyarrow; print('pandas', pandas.__version__, '/ pyarrow', pyarrow.__version__)"
         shell: pwsh
 
       - name: Run tests
