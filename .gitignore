@@ -64,3 +64,9 @@ docs/_build/
 
 # Logs
 *.log
+
+# WPP fixture build artifacts. create_wpp_etl.ps1 has to build in this fixed
+# directory, because WPP derives the trace GUID from the source file's full
+# path; only wpptest.c is source, the rest is generated.
+tests/fixtures/wpp_provider/*
+!tests/fixtures/wpp_provider/wpptest.c

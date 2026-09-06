@@ -298,3 +298,59 @@ jobs:
           cd $env:TEMP
           & "$env:GITHUB_WORKSPACE\.venv\Scripts\python.exe" -c "import pyetwkit; from pyetwkit import _core; print(pyetwkit.__version__); assert _core.list_providers()"
         shell: pwsh
+
+  wpp-decoding:
+    name: Decode WPP end to end
+    runs-on: windows-latest
+    needs: [lint-rust, lint-python, test-rust]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: ""
+
+      - name: Set up Python
+        run: |
+          uv python install 3.12
+          uv venv --python 3.12
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-wpp-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-wpp-
+
+      - name: Install the package
+        run: uv pip install .
+
+      # The committed wpp.etl covers the TMF routes, but not the PDB one: WPP
+      # derives the trace GUID from the source file's full path, so a PDB built
+      # anywhere other than where the capture was made cannot decode it. Build
+      # the provider and capture fresh events here so all three are exercised.
+      - name: Build the WPP provider and capture its events
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "wpp"
+          .\tests\fixtures\create_wpp_etl.ps1 -OutputDir $out -IncludePdb
+          echo "WPP_OUT=$out" >> $env:GITHUB_ENV
+        shell: pwsh
+
+      - name: Verify every WPP decoding route
+        # Fails loudly rather than skipping: a WPP feature that silently stops
+        # being exercised is how the first attempt at this shipped broken.
+        run: |
+          & .venv\Scripts\python.exe tests\wpp_live_check.py `
+            "$env:WPP_OUT\wpp.etl" "$env:WPP_OUT\wpp_tmf" "$env:WPP_OUT\wpptest.pdb"
+        shell: pwsh

@@ -91,6 +91,7 @@ Documentation
    :caption: Advanced
 
    advanced/low_level
+   advanced/event_properties
    advanced/etw_basics
 
 Indices and tables
