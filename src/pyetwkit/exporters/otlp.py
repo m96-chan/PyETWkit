@@ -8,17 +8,68 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit, urlunsplit
+from urllib.request import Request, urlopen
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+# OTLP/HTTP puts traces here. The default port is 4318; 4317 is the gRPC one.
+OTLP_TRACES_PATH = "/v1/traces"
+
+# OTLP's JSON encoding follows the protobuf JSON mapping with one relevant
+# deviation: "only integer enum values are allowed in OTLP JSON Protobuf
+# Encoding; the enum name strings MUST NOT be used". These used to be sent as
+# "INTERNAL" and "OK", which a collector rejects.
+# https://opentelemetry.io/docs/specs/otlp/
+SPAN_KIND_INTERNAL = 1
+STATUS_CODE_OK = 1
+
+
+def _timestamp_seconds(raw: Any) -> float:
+    """Seconds since the epoch, from whatever an event carries.
+
+    `EtwEvent.timestamp` is an RFC 3339 string with nanosecond precision, e.g.
+    "2026-09-05T13:09:24.061643500+00:00". `float()` on that raises, which meant
+    every real event blew up here -- the existing tests all used mocks or plain
+    numbers. `datetime.fromisoformat` cannot take nine fractional digits either
+    on the Python versions this supports, so the fraction is trimmed to six.
+    """
+    if hasattr(raw, "timestamp"):  # datetime
+        return float(raw.timestamp())
+
+    if isinstance(raw, str):
+        text = re.sub(r"(\.\d{6})\d+", r"\1", raw)
+        try:
+            return datetime.fromisoformat(text).timestamp()
+        except ValueError:
+            logger.warning("Unparseable event timestamp %r; using now()", raw)
+            return time.time()
+
+    return float(raw)
+
+
+def _package_version() -> str:
+    """The package version, imported lazily.
+
+    `pyetwkit/__init__.py` imports this module, so importing it back at module
+    scope would be a cycle that happens to work only because `__version__` is
+    defined before that import runs.
+    """
+    from pyetwkit import __version__
+
+    return __version__
 
 
 class ExportMode(Enum):
@@ -145,27 +196,31 @@ class SpanMapper:
 
 
 class OtlpExporter:
-    """Maps ETW events to OTLP spans. **Sending is not implemented.**
+    """Exports ETW events to an OTLP collector over HTTP.
 
-    Nothing in this class transmits anything: there is no HTTP or gRPC client
-    behind `endpoint`, and :meth:`flush` raises :class:`NotImplementedError`
-    rather than reporting a success it cannot deliver. Event to span mapping,
-    sampling and batching all work, so this remains useful for building the
-    payload, but it will not reach a collector.
+    Spans are sent as OTLP/HTTP with JSON encoding, POSTed to ``/v1/traces`` on
+    the given endpoint. That encoding needs no dependencies beyond the standard
+    library, which is why it is used in preference to gRPC or protobuf.
 
-    Use :class:`OtlpFileExporter` to write spans out today, and see #88 for the
-    transport.
+    The endpoint is used as given; only a missing path is filled in. **OTLP/HTTP
+    is normally port 4318** -- 4317 is the gRPC port and will not answer an HTTP
+    request.
+
+    :meth:`flush` returns False and logs the reason when a send fails, keeping
+    the batch so it can be retried. It never raises: exporters are driven from
+    event callbacks, and a collector being down should not stop a trace session.
+
+    See :class:`OtlpFileExporter` to write spans to a file instead.
 
     Example:
         >>> exporter = OtlpExporter(
-        ...     endpoint="http://collector:4317",
+        ...     endpoint="http://collector:4318",
         ...     service_name="windows-etw"
         ... )
-        >>> exporter.export(event)   # buffers the span
+        >>> exporter.export(event)
         True
-        >>> exporter.flush()         # raises NotImplementedError
-        Traceback (most recent call last):
-        NotImplementedError: ...
+        >>> if not exporter.flush():
+        ...     log.warning("OTLP export failed; see the log for the reason")
     """
 
     def __init__(
@@ -239,17 +294,14 @@ class OtlpExporter:
         return self._sample_rate
 
     def export(self, event: Any) -> bool:
-        """Buffer one event as a span.
+        """Buffer one event as a span, sending once the batch is full.
 
         Args:
             event: ETW event to export.
 
         Returns:
-            True once the span is buffered.
-
-        Raises:
-            NotImplementedError: if this fills the batch, since that triggers a
-                :meth:`flush` and there is no transport to flush to.
+            True once the span is buffered, or the result of the :meth:`flush`
+            this triggers if the event fills the batch.
         """
         # Apply sampling
         if self._sample_rate < 1.0:
@@ -283,38 +335,119 @@ class OtlpExporter:
             self.export(event)
         return self.flush()
 
+    def _traces_url(self) -> str:
+        """The URL to POST to.
+
+        The endpoint is used as given. Only the path is filled in, and only when
+        there is none: rewriting what the caller passed -- including "helpfully"
+        turning the gRPC port 4317 into the HTTP one -- would break anyone
+        serving OTLP/HTTP somewhere else, and quietly.
+        """
+        parts = urlsplit(self._endpoint)
+        if parts.path in ("", "/"):
+            return urlunsplit(parts._replace(path=OTLP_TRACES_PATH))
+        return self._endpoint
+
     def flush(self) -> bool:
-        """Send pending spans to the collector. **Not implemented.**
+        """Send pending spans to the collector.
 
-        Raises:
-            NotImplementedError: always, when there is anything to send.
+        Returns:
+            True if there was nothing to send or the collector accepted it,
+            False if the send failed. Failures are logged with the reason.
 
-        This used to clear the batch and return True, so every event was
-        discarded and the caller was told it had been delivered. Failing is the
-        only honest answer until there is a transport: a monitoring pipeline
-        that reports success while sending nothing is worse than one that stops.
+        The batch is kept when a send fails, so the events can be retried rather
+        than lost. Nothing is raised: this is called from event callbacks, and a
+        collector being down should not take the trace session with it.
         """
         if not self._batch:
             self._last_export = time.time()
             return True
 
-        pending = len(self._batch)
-        raise NotImplementedError(
-            f"OtlpExporter cannot send: no OTLP transport is implemented, so "
-            f"{pending} span(s) would be silently discarded. Use OtlpFileExporter "
-            f"to write spans to a file, or follow "
-            f"https://github.com/m96-chan/PyETWkit/issues/88 for the transport."
-        )
+        url = self._traces_url()
+        payload = json.dumps(self._build_request(self._batch)).encode("utf-8")
 
-    def shutdown(self) -> None:
-        """Shutdown the exporter.
+        request = Request(url, data=payload, method="POST")
+        request.add_header("Content-Type", "application/json")
+        for name, value in self._headers.items():
+            request.add_header(name, value)
 
-        Discards anything still buffered rather than raising from a teardown
-        path, since callers reach this from ``finally`` blocks. `flush` is where
-        the missing transport is reported.
-        """
+        timeout = self._config.timeout_ms / 1000.0
+        try:
+            with urlopen(request, timeout=timeout) as response:  # noqa: S310 - caller's URL
+                status = response.status
+        except HTTPError as e:
+            logger.error(
+                "OTLP export to %s failed: HTTP %s %s. %d span(s) kept for retry.",
+                url,
+                e.code,
+                e.reason,
+                len(self._batch),
+            )
+            return False
+        except URLError as e:
+            hint = ""
+            if urlsplit(self._endpoint).port == 4317:
+                hint = " (port 4317 is the OTLP/gRPC port; OTLP/HTTP is usually 4318)"
+            logger.error(
+                "OTLP export to %s failed: %s%s. %d span(s) kept for retry.",
+                url,
+                e.reason,
+                hint,
+                len(self._batch),
+            )
+            return False
+        except OSError as e:
+            logger.error(
+                "OTLP export to %s failed: %s. %d span(s) kept for retry.",
+                url,
+                e,
+                len(self._batch),
+            )
+            return False
+
+        if not 200 <= status < 300:
+            logger.error(
+                "OTLP export to %s failed: HTTP %s. %d span(s) kept for retry.",
+                url,
+                status,
+                len(self._batch),
+            )
+            return False
+
         self._batch.clear()
         self._last_export = time.time()
+        return True
+
+    def _build_request(self, spans: list[dict[str, Any]]) -> dict[str, Any]:
+        """Wrap spans in the OTLP ExportTraceServiceRequest envelope."""
+        attributes = [
+            {"key": "service.name", "value": {"stringValue": self._service_name}},
+            *(
+                {"key": key, "value": _attribute_value(value)}
+                for key, value in self._resource_attributes.items()
+            ),
+        ]
+        return {
+            "resourceSpans": [
+                {
+                    "resource": {"attributes": attributes},
+                    "scopeSpans": [
+                        {
+                            "scope": {"name": "pyetwkit", "version": _package_version()},
+                            "spans": spans,
+                        }
+                    ],
+                }
+            ]
+        }
+
+    def shutdown(self) -> None:
+        """Flush what is left and stop.
+
+        Callers reach this from ``finally``, so a failure is logged by `flush`
+        and otherwise ignored rather than raised from a teardown path.
+        """
+        self.flush()
 
     def attach_to_session(self, session: Any) -> None:
         """Attach the exporter to an ETW session.
@@ -424,18 +557,13 @@ def event_to_span(
     thread_id = getattr(event, "thread_id", 0)
     properties = getattr(event, "properties", {})
 
-    # Convert timestamp to float (seconds since epoch)
-    if hasattr(raw_timestamp, "timestamp"):
-        # datetime object
-        timestamp = raw_timestamp.timestamp()
-    else:
-        timestamp = float(raw_timestamp)
+    timestamp = _timestamp_seconds(raw_timestamp)
 
     return {
         "traceId": uuid.uuid4().hex,
         "spanId": uuid.uuid4().hex[:16],
         "name": span_name or f"{provider_name}.{event_id}",
-        "kind": "INTERNAL",
+        "kind": SPAN_KIND_INTERNAL,
         "startTimeUnixNano": int(timestamp * 1e9),
         "endTimeUnixNano": int(timestamp * 1e9),
         "attributes": [
@@ -446,7 +574,7 @@ def event_to_span(
             {"key": "thread.id", "value": {"intValue": thread_id}},
             *[{"key": f"etw.{k}", "value": _attribute_value(v)} for k, v in properties.items()],
         ],
-        "status": {"code": "OK"},
+        "status": {"code": STATUS_CODE_OK},
     }
 
 
@@ -469,12 +597,7 @@ def event_to_log(
     process_id = getattr(event, "process_id", 0)
     properties = getattr(event, "properties", {})
 
-    # Convert timestamp to float (seconds since epoch)
-    if hasattr(raw_timestamp, "timestamp"):
-        # datetime object
-        timestamp = raw_timestamp.timestamp()
-    else:
-        timestamp = float(raw_timestamp)
+    timestamp = _timestamp_seconds(raw_timestamp)
 
     return {
         "timeUnixNano": int(timestamp * 1e9),

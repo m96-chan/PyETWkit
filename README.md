@@ -33,7 +33,7 @@ A modern, high-performance ETW (Event Tracing for Windows) toolkit for Python, p
 - **Live Dashboard**: Browser-based real-time visualization with Gradio
 - **Event Correlation Engine**: Auto-correlate events by PID/TID/Handle
 - **Recording & Replay**: Capture and replay ETW sessions (.etwpack format)
-- **OpenTelemetry span mapping**: Map ETW events to OTLP spans and write them to a file. Sending to a collector is [not implemented yet](https://github.com/m96-chan/PyETWkit/issues/88)
+- **OpenTelemetry Exporter**: Send events to an OTLP collector over HTTP (Jaeger, Grafana, Datadog), or write spans to a file. No extra dependency
 
 ### Export Formats
 - CSV, JSON, JSONL, Parquet, Arrow
@@ -168,16 +168,13 @@ for event in player.events():
     print(f"Event {event['event_id']}")
 ```
 
-### OpenTelemetry Span Export
+### OpenTelemetry Export
 
-> **Sending to a collector is not implemented.** `OtlpExporter` maps events to
-> spans but has no HTTP or gRPC transport, and its `flush()` raises
-> `NotImplementedError` rather than reporting a delivery it cannot make. Use
-> `OtlpFileExporter` to get spans out today; see
-> [#88](https://github.com/m96-chan/PyETWkit/issues/88) for the transport.
+Spans are sent as OTLP/HTTP with JSON encoding, so no extra dependency is
+needed. Note **4318** — 4317 is the gRPC port and will not answer HTTP.
 
 ```python
-from pyetwkit import OtlpFileExporter, SpanMapper
+from pyetwkit import OtlpExporter, SpanMapper
 
 # Map ETW events to spans
 mapper = SpanMapper()
@@ -185,10 +182,29 @@ mapper.add_rule(
     provider="Microsoft-Windows-Kernel-Process",
     event_id=1,
     span_name="process.start",
-    attributes=["ProcessId", "ImageFileName"],
+    attributes=["ProcessID", "ImageName"],
 )
 
-# Write spans to a file, ready to be shipped by a collector agent
+exporter = OtlpExporter(
+    endpoint="http://collector:4318",
+    service_name="my-service",
+    resource_attributes={"deployment.environment": "production"},
+    span_mapper=mapper,
+)
+
+for event in events:
+    exporter.export(event)
+
+# False means nothing was delivered; the batch is kept so it can be retried.
+if not exporter.flush():
+    log.warning("OTLP export failed; see the log for the reason")
+```
+
+To write spans to a file instead, for a collector agent to pick up:
+
+```python
+from pyetwkit import OtlpFileExporter
+
 exporter = OtlpFileExporter("traces.json", service_name="my-service")
 for event in events:
     exporter.export(event)
@@ -296,7 +312,7 @@ is the first release since v3.0.1 that PyPI users will see._
 - **Live Dashboard**: Gradio-based real-time UI (`pyetwkit dashboard` CLI)
 - **Event Correlation Engine**: Link events by PID/TID/Handle with timeline export
 - **Recording & Replay**: Capture sessions to `.etwpack` format with compression
-- **OpenTelemetry Exporter**: Export to OTLP endpoints (Jaeger, Grafana, etc.) — _announced, but the transport was never implemented; see [#88](https://github.com/m96-chan/PyETWkit/issues/88)_
+- **OpenTelemetry Exporter**: Export to OTLP endpoints (Jaeger, Grafana, etc.) — _announced here, but the transport was not actually implemented until v3.2.0 (#88, #90)_
 
 ### v2.0.0 (2024-12)
 - **Multi-session support**: Run multiple ETW sessions simultaneously

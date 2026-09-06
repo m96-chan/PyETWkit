@@ -238,19 +238,22 @@ class TestOtlpExporterIntegration:
         assert hasattr(exporter, "shutdown")
 
     def test_flush_does_not_report_success_without_sending(self) -> None:
-        """There is no transport, so flush must not claim delivery.
+        """Nothing delivered means no success, however that comes about.
 
-        It used to clear the batch and return True, which meant every event was
-        discarded while the caller was told it had been sent. Port 1 is closed,
-        so a real transport could not succeed here either.
+        This once returned True while discarding everything (#88), then raised
+        NotImplementedError while there was no transport, and now reports a
+        failed send. The contract each time is the same: do not claim delivery.
+        Port 1 is closed, so nothing can have arrived.
+
+        The successful path lives in test_otlp_transport.py, which runs a real
+        collector.
         """
         from pyetwkit.exporters import OtlpExporter
 
         exporter = OtlpExporter(endpoint="http://127.0.0.1:1")
         exporter.export({"provider_name": "P", "event_id": 1, "process_id": 1, "properties": {}})
 
-        with pytest.raises(NotImplementedError, match="no OTLP transport"):
-            exporter.flush()
+        assert exporter.flush() is False
 
     def test_export_batch_does_not_report_success_either(self) -> None:
         """export_batch() ends in a flush, so it cannot claim delivery either."""
@@ -258,10 +261,12 @@ class TestOtlpExporterIntegration:
 
         exporter = OtlpExporter(endpoint="http://127.0.0.1:1")
 
-        with pytest.raises(NotImplementedError):
+        assert (
             exporter.export_batch(
                 [{"provider_name": "P", "event_id": 1, "process_id": 1, "properties": {}}]
             )
+            is False
+        )
 
     def test_flush_with_nothing_buffered_is_not_an_error(self) -> None:
         """Nothing to send is not a failure to send."""
