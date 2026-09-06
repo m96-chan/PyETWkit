@@ -90,6 +90,16 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "wpp_tmf_search_path",
         wrap_pyfunction!(tdh::py_wpp_tmf_search_path, m)?,
     )?;
+    m.add(
+        "set_wpp_tmf_file",
+        wrap_pyfunction!(tdh::py_set_wpp_tmf_file, m)?,
+    )?;
+    m.add("wpp_tmf_file", wrap_pyfunction!(tdh::py_wpp_tmf_file, m)?)?;
+    m.add(
+        "set_wpp_pdb_path",
+        wrap_pyfunction!(tdh::py_set_wpp_pdb_path, m)?,
+    )?;
+    m.add("wpp_pdb_path", wrap_pyfunction!(tdh::py_wpp_pdb_path, m)?)?;
 
     // Register ETL reader
     m.add_class::<etl_reader::PyEtlReader>()?;

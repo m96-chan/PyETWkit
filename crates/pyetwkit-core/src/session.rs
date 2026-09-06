@@ -372,6 +372,18 @@ pub fn parse_event_record(record: &EventRecord, schema: Option<&Schema>) -> EtwE
     // of every decoded event's data would be a memory cost for nothing.
     event.formatted_properties = crate::tdh::format_properties(record);
 
+    // A WPP event carries no named payload, only a message, and TDH will not
+    // produce it without format information. When it can, put it where the
+    // placeholder TDH synthesises already lives, so there is one place to look
+    // rather than a property that says "No Format Information found" beside a
+    // field that has the answer.
+    if let Some(message) = crate::tdh::wpp_message(record) {
+        event.properties.insert(
+            "FormattedString".to_string(),
+            crate::event::EventValue::String(message),
+        );
+    }
+
     if event.properties.is_empty() && !crate::tdh::has_schema(record) {
         event.raw_data = crate::tdh::raw_user_data(record);
     }
