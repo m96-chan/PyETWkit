@@ -145,14 +145,27 @@ class SpanMapper:
 
 
 class OtlpExporter:
-    """Exports ETW events to OpenTelemetry Protocol (OTLP).
+    """Maps ETW events to OTLP spans. **Sending is not implemented.**
+
+    Nothing in this class transmits anything: there is no HTTP or gRPC client
+    behind `endpoint`, and :meth:`flush` raises :class:`NotImplementedError`
+    rather than reporting a success it cannot deliver. Event to span mapping,
+    sampling and batching all work, so this remains useful for building the
+    payload, but it will not reach a collector.
+
+    Use :class:`OtlpFileExporter` to write spans out today, and see #88 for the
+    transport.
 
     Example:
         >>> exporter = OtlpExporter(
         ...     endpoint="http://collector:4317",
         ...     service_name="windows-etw"
         ... )
-        >>> exporter.export(event)
+        >>> exporter.export(event)   # buffers the span
+        True
+        >>> exporter.flush()         # raises NotImplementedError
+        Traceback (most recent call last):
+        NotImplementedError: ...
     """
 
     def __init__(
@@ -226,13 +239,17 @@ class OtlpExporter:
         return self._sample_rate
 
     def export(self, event: Any) -> bool:
-        """Export a single event.
+        """Buffer one event as a span.
 
         Args:
             event: ETW event to export.
 
         Returns:
-            True if exported successfully.
+            True once the span is buffered.
+
+        Raises:
+            NotImplementedError: if this fills the batch, since that triggers a
+                :meth:`flush` and there is no transport to flush to.
         """
         # Apply sampling
         if self._sample_rate < 1.0:
@@ -267,23 +284,37 @@ class OtlpExporter:
         return self.flush()
 
     def flush(self) -> bool:
-        """Flush pending events to the collector.
+        """Send pending spans to the collector. **Not implemented.**
 
-        Returns:
-            True if flushed successfully.
+        Raises:
+            NotImplementedError: always, when there is anything to send.
+
+        This used to clear the batch and return True, so every event was
+        discarded and the caller was told it had been delivered. Failing is the
+        only honest answer until there is a transport: a monitoring pipeline
+        that reports success while sending nothing is worse than one that stops.
         """
         if not self._batch:
+            self._last_export = time.time()
             return True
 
-        # In production, would send to OTLP endpoint
-        # For now, just clear the batch
-        self._batch.clear()
-        self._last_export = time.time()
-        return True
+        pending = len(self._batch)
+        raise NotImplementedError(
+            f"OtlpExporter cannot send: no OTLP transport is implemented, so "
+            f"{pending} span(s) would be silently discarded. Use OtlpFileExporter "
+            f"to write spans to a file, or follow "
+            f"https://github.com/m96-chan/PyETWkit/issues/88 for the transport."
+        )
 
     def shutdown(self) -> None:
-        """Shutdown the exporter."""
-        self.flush()
+        """Shutdown the exporter.
+
+        Discards anything still buffered rather than raising from a teardown
+        path, since callers reach this from ``finally`` blocks. `flush` is where
+        the missing transport is reported.
+        """
+        self._batch.clear()
+        self._last_export = time.time()
 
     def attach_to_session(self, session: Any) -> None:
         """Attach the exporter to an ETW session.

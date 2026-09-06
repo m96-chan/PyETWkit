@@ -33,7 +33,7 @@ A modern, high-performance ETW (Event Tracing for Windows) toolkit for Python, p
 - **Live Dashboard**: Browser-based real-time visualization with Gradio
 - **Event Correlation Engine**: Auto-correlate events by PID/TID/Handle
 - **Recording & Replay**: Capture and replay ETW sessions (.etwpack format)
-- **OpenTelemetry Exporter**: Export events to OTLP (Jaeger, Grafana, Datadog)
+- **OpenTelemetry span mapping**: Map ETW events to OTLP spans and write them to a file. Sending to a collector is [not implemented yet](https://github.com/m96-chan/PyETWkit/issues/88)
 
 ### Export Formats
 - CSV, JSON, JSONL, Parquet, Arrow
@@ -168,19 +168,16 @@ for event in player.events():
     print(f"Event {event['event_id']}")
 ```
 
-### OpenTelemetry Export
+### OpenTelemetry Span Export
+
+> **Sending to a collector is not implemented.** `OtlpExporter` maps events to
+> spans but has no HTTP or gRPC transport, and its `flush()` raises
+> `NotImplementedError` rather than reporting a delivery it cannot make. Use
+> `OtlpFileExporter` to get spans out today; see
+> [#88](https://github.com/m96-chan/PyETWkit/issues/88) for the transport.
 
 ```python
-from pyetwkit import OtlpExporter, SpanMapper
-
-# Configure exporter
-exporter = OtlpExporter(
-    endpoint="http://collector:4317",
-    service_name="my-service",
-    resource_attributes={
-        "deployment.environment": "production",
-    },
-)
+from pyetwkit import OtlpFileExporter, SpanMapper
 
 # Map ETW events to spans
 mapper = SpanMapper()
@@ -191,7 +188,8 @@ mapper.add_rule(
     attributes=["ProcessId", "ImageFileName"],
 )
 
-# Export events
+# Write spans to a file, ready to be shipped by a collector agent
+exporter = OtlpFileExporter("traces.json", service_name="my-service")
 for event in events:
     exporter.export(event)
 exporter.flush()
@@ -280,7 +278,7 @@ Windows ETW subsystem
 - **Live Dashboard**: Gradio-based real-time UI (`pyetwkit dashboard` CLI)
 - **Event Correlation Engine**: Link events by PID/TID/Handle with timeline export
 - **Recording & Replay**: Capture sessions to `.etwpack` format with compression
-- **OpenTelemetry Exporter**: Export to OTLP endpoints (Jaeger, Grafana, etc.)
+- **OpenTelemetry Exporter**: Export to OTLP endpoints (Jaeger, Grafana, etc.) — _announced, but the transport was never implemented; see [#88](https://github.com/m96-chan/PyETWkit/issues/88)_
 
 ### v2.0.0 (2024-12)
 - **Multi-session support**: Run multiple ETW sessions simultaneously
