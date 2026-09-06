@@ -4,6 +4,13 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: >-
+          Upload the built artifacts to PyPI. Use this to finish a release whose
+          first attempt failed after the GitHub release was already published.
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -66,7 +73,13 @@ jobs:
     name: Publish to PyPI
     runs-on: ubuntu-latest
     needs: [build-wheels, build-sdist]
-    if: github.event_name == 'release'
+    # A re-run has to be able to publish. v3.0.2 was tagged and announced but
+    # never reached PyPI: one wheel build failed, which correctly blocked this
+    # job, and the manual re-run that followed went green while skipping it,
+    # because `workflow_dispatch` could never satisfy `event_name == 'release'`.
+    # The recovery path looked like it had worked. Opting in explicitly keeps a
+    # dispatch from publishing by accident while making recovery possible.
+    if: github.event_name == 'release' || inputs.publish
     environment: pypi
     permissions:
       id-token: write
@@ -76,6 +89,24 @@ jobs:
         with:
           path: dist/
           merge-multiple: true
+
+      # PyPI will not let a version be re-uploaded, so a partial set of wheels
+      # is not something that can be fixed afterwards. Count them first.
+      - name: Check the artifact set is complete
+        run: |
+          set -euo pipefail
+          wheels=$(find dist -name '*.whl' | wc -l)
+          sdists=$(find dist -name '*.tar.gz' | wc -l)
+          echo "wheels: $wheels, sdists: $sdists"
+          find dist -name '*.whl' -o -name '*.tar.gz' | sort
+          if [ "$wheels" -ne 5 ]; then
+            echo "::error::expected 5 wheels (3.10-3.14), found $wheels"
+            exit 1
+          fi
+          if [ "$sdists" -ne 1 ]; then
+            echo "::error::expected 1 sdist, found $sdists"
+            exit 1
+          fi
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
