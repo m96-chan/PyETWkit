@@ -33,7 +33,7 @@ A modern, high-performance ETW (Event Tracing for Windows) toolkit for Python, p
 - **Live Dashboard**: Browser-based real-time visualization with Gradio
 - **Event Correlation Engine**: Auto-correlate events by PID/TID/Handle
 - **Recording & Replay**: Capture and replay ETW sessions (.etwpack format)
-- **OpenTelemetry Exporter**: Export events to OTLP (Jaeger, Grafana, Datadog)
+- **OpenTelemetry span mapping**: Map ETW events to OTLP spans and write them to a file. Sending to a collector is [not implemented yet](https://github.com/m96-chan/PyETWkit/issues/88)
 
 ### Export Formats
 - CSV, JSON, JSONL, Parquet, Arrow
@@ -168,19 +168,16 @@ for event in player.events():
     print(f"Event {event['event_id']}")
 ```
 
-### OpenTelemetry Export
+### OpenTelemetry Span Export
+
+> **Sending to a collector is not implemented.** `OtlpExporter` maps events to
+> spans but has no HTTP or gRPC transport, and its `flush()` raises
+> `NotImplementedError` rather than reporting a delivery it cannot make. Use
+> `OtlpFileExporter` to get spans out today; see
+> [#88](https://github.com/m96-chan/PyETWkit/issues/88) for the transport.
 
 ```python
-from pyetwkit import OtlpExporter, SpanMapper
-
-# Configure exporter
-exporter = OtlpExporter(
-    endpoint="http://collector:4317",
-    service_name="my-service",
-    resource_attributes={
-        "deployment.environment": "production",
-    },
-)
+from pyetwkit import OtlpFileExporter, SpanMapper
 
 # Map ETW events to spans
 mapper = SpanMapper()
@@ -191,7 +188,8 @@ mapper.add_rule(
     attributes=["ProcessId", "ImageFileName"],
 )
 
-# Export events
+# Write spans to a file, ready to be shipped by a collector agent
+exporter = OtlpFileExporter("traces.json", service_name="my-service")
 for event in events:
     exporter.export(event)
 exporter.flush()
@@ -276,11 +274,29 @@ Windows ETW subsystem
 
 ## Changelog
 
+### v3.1.0 (2026-09)
+
+Event properties are now decoded from the schema via TDH, rather than guessed
+from a list of twelve names. See [Event Properties](docs/advanced/event_properties.rst).
+
+- **All properties decoded**: whatever the provider declares, not a guess list (#72, #76)
+- **Arrays and nested structures**: lists and dicts, instead of only the first element (#84)
+- **WPP events**: decoded given a `.pdb` or `.tmf` — `set_wpp_pdb_path()` needs no SDK tooling (#72)
+- **Undecodable events keep their payload** in `raw_data` instead of losing it
+- **`formatted_properties`**: TDH's own display strings, opt-in, with value maps resolved
+- Correct SIDs, `win:Boolean`, pointer widths from 32-bit processes, and counted strings
+- **`pip install .` works** — it never had (#79)
+- `OtlpExporter` no longer reports success while discarding events; its transport
+  was never implemented (#88). `OtlpFileExporter` is unaffected
+
+_Note: v3.0.2 was tagged and released on GitHub but never reached PyPI, so this
+is the first release since v3.0.1 that PyPI users will see._
+
 ### v3.0.0 (2024-12)
 - **Live Dashboard**: Gradio-based real-time UI (`pyetwkit dashboard` CLI)
 - **Event Correlation Engine**: Link events by PID/TID/Handle with timeline export
 - **Recording & Replay**: Capture sessions to `.etwpack` format with compression
-- **OpenTelemetry Exporter**: Export to OTLP endpoints (Jaeger, Grafana, etc.)
+- **OpenTelemetry Exporter**: Export to OTLP endpoints (Jaeger, Grafana, etc.) — _announced, but the transport was never implemented; see [#88](https://github.com/m96-chan/PyETWkit/issues/88)_
 
 ### v2.0.0 (2024-12)
 - **Multi-session support**: Run multiple ETW sessions simultaneously
