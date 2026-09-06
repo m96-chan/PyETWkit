@@ -33,9 +33,11 @@ use std::sync::{Arc, OnceLock};
 use uuid::Uuid;
 use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::System::Diagnostics::Etw::{
-    TdhFormatProperty, TdhGetEventInformation, TdhGetEventMapInformation, TdhGetProperty,
-    TdhGetPropertySize, EVENT_MAP_INFO, EVENT_PROPERTY_INFO, EVENT_RECORD,
-    PROPERTY_DATA_DESCRIPTOR, TDH_CONTEXT, TDH_CONTEXT_WPP_TMFSEARCHPATH, TRACE_EVENT_INFO,
+    DecodingSourceWPP, TdhCloseDecodingHandle, TdhFormatProperty, TdhGetEventInformation,
+    TdhGetEventMapInformation, TdhGetProperty, TdhGetPropertySize, TdhGetWppMessage,
+    TdhOpenDecodingHandle, TdhSetDecodingParameter, EVENT_MAP_INFO, EVENT_PROPERTY_INFO,
+    EVENT_RECORD, PROPERTY_DATA_DESCRIPTOR, TDH_CONTEXT, TDH_CONTEXT_PDB_PATH,
+    TDH_CONTEXT_WPP_TMFFILE, TDH_CONTEXT_WPP_TMFSEARCHPATH, TDH_HANDLE, TRACE_EVENT_INFO,
 };
 
 /// `EVENT_HEADER_FLAG_32_BIT_HEADER`, used to pick the pointer width of the
@@ -163,57 +165,190 @@ struct EventLayout {
     /// Every property TDH reports, positionally aligned with
     /// `EventPropertyInfoArray` so an index from the schema means the same here.
     properties: Vec<PropertyDesc>,
+    /// Whether TDH decodes this event as WPP, which is the only kind whose
+    /// message comes from a `.tmf` rather than from the payload.
+    is_wpp: bool,
     /// How many of those are top level; the rest are members of some struct.
     top_level_count: usize,
 }
 
 type LayoutKey = (u128, u16, u8);
 
-/// Directory TDH should search for WPP `.tmf` files, NUL-terminated UTF-16.
+/// Where TDH should look for WPP format information.
 ///
-/// WPP events carry no schema of their own: the format strings live in a `.tmf`
-/// generated from the emitting binary's PDB. Without one TDH can say nothing
-/// about the event, which is why such events come back with no properties and
-/// only `raw_data`. Given a search path it can decode them.
-fn tmf_search_path() -> &'static Mutex<Option<Vec<u16>>> {
-    static PATH: OnceLock<Mutex<Option<Vec<u16>>>> = OnceLock::new();
-    PATH.get_or_init(|| Mutex::new(None))
+/// WPP events carry no schema of their own. The format strings live in a `.tmf`
+/// generated from the emitting binary's PDB, or in that PDB directly, and
+/// without one TDH will only ever say "No Format Information found".
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct WppSources {
+    /// Directory of `.tmf` files, named after each trace GUID.
+    tmf_search_path: Option<String>,
+    /// A single `.tmf` file.
+    tmf_file: Option<String>,
+    /// A `.pdb` for the binary that emitted the events. TDH reads the WPP
+    /// format information straight out of it, so no `.tmf` need be generated.
+    pdb_path: Option<String>,
 }
 
+impl WppSources {
+    fn is_empty(&self) -> bool {
+        self.tmf_search_path.is_none() && self.tmf_file.is_none() && self.pdb_path.is_none()
+    }
+}
+
+fn wpp_sources() -> &'static Mutex<WppSources> {
+    static SOURCES: OnceLock<Mutex<WppSources>> = OnceLock::new();
+    SOURCES.get_or_init(|| Mutex::new(WppSources::default()))
+}
+
+/// True while any WPP source is configured, so the common path can skip the
+/// mutex and the decoding handle entirely.
+static WPP_CONFIGURED: AtomicBool = AtomicBool::new(false);
+
 /// Point TDH at a directory of WPP `.tmf` files, or pass `None` to stop.
-///
-/// Clears the layout cache, since whether an event has a schema is exactly what
-/// this changes.
 pub fn set_wpp_tmf_search_path(path: Option<&str>) {
-    let encoded = path.map(|p| {
-        let mut utf16: Vec<u16> = p.encode_utf16().collect();
-        utf16.push(0);
-        utf16
-    });
-    *tmf_search_path().lock() = encoded;
-    clear_layout_cache();
+    update_wpp_sources(|s| s.tmf_search_path = path.map(str::to_owned));
+}
+
+/// Point TDH at a single WPP `.tmf` file, or pass `None` to stop.
+pub fn set_wpp_tmf_file(path: Option<&str>) {
+    update_wpp_sources(|s| s.tmf_file = path.map(str::to_owned));
+}
+
+/// Point TDH at the `.pdb` of the binary that emitted the WPP events.
+///
+/// The most convenient of the three: TDH reads the format information out of
+/// the PDB, so there is no need to run `tracepdb` to produce a `.tmf` first.
+pub fn set_wpp_pdb_path(path: Option<&str>) {
+    update_wpp_sources(|s| s.pdb_path = path.map(str::to_owned));
 }
 
 /// The directory currently searched for `.tmf` files, if any.
 pub fn wpp_tmf_search_path() -> Option<String> {
-    tmf_search_path().lock().as_ref().map(|utf16| {
-        let end = utf16.iter().position(|&u| u == 0).unwrap_or(utf16.len());
-        String::from_utf16_lossy(&utf16[..end])
-    })
+    wpp_sources().lock().tmf_search_path.clone()
 }
 
-/// Build the `TDH_CONTEXT` array for a decoding call.
+/// The `.tmf` file currently configured, if any.
+pub fn wpp_tmf_file() -> Option<String> {
+    wpp_sources().lock().tmf_file.clone()
+}
+
+/// The `.pdb` currently configured, if any.
+pub fn wpp_pdb_path() -> Option<String> {
+    wpp_sources().lock().pdb_path.clone()
+}
+
+fn update_wpp_sources(edit: impl FnOnce(&mut WppSources)) {
+    let mut sources = wpp_sources().lock();
+    edit(&mut sources);
+    WPP_CONFIGURED.store(!sources.is_empty(), Ordering::Relaxed);
+    // The handle holds the old settings, and layouts were resolved without them.
+    drop(sources);
+    close_wpp_handle();
+    clear_layout_cache();
+}
+
+/// The decoding handle WPP messages are read through, built on first use.
 ///
-/// Empty unless a TMF search path has been set, so the common path passes TDH
-/// no context at all, exactly as before.
-fn tdh_contexts(path: &Option<Vec<u16>>) -> Vec<TDH_CONTEXT> {
-    match path {
-        Some(utf16) => vec![TDH_CONTEXT {
+/// This is the part that took real events to get right. `TdhGetProperty` accepts
+/// a `TDH_CONTEXT` array and *ignores* it for WPP: passing the TMF search path,
+/// the TMF file, both together, a PDB path, or setting TRACE_FORMAT_SEARCH_PATH
+/// all leave `FormattedString` reading "No Format Information found". The format
+/// information is only ever consulted through a decoding handle, so the sources
+/// have to go to `TdhSetDecodingParameter` and the message has to be read with
+/// `TdhGetWppMessage`.
+fn wpp_handle() -> &'static Mutex<Option<TDH_HANDLE>> {
+    static HANDLE: OnceLock<Mutex<Option<TDH_HANDLE>>> = OnceLock::new();
+    HANDLE.get_or_init(|| Mutex::new(None))
+}
+
+fn close_wpp_handle() {
+    if let Some(handle) = wpp_handle().lock().take() {
+        unsafe {
+            let _ = TdhCloseDecodingHandle(handle);
+        }
+    }
+}
+
+/// Open a decoding handle carrying the configured WPP sources.
+fn open_wpp_handle(sources: &WppSources) -> Option<TDH_HANDLE> {
+    let mut handle = TDH_HANDLE::default();
+    if unsafe { TdhOpenDecodingHandle(&mut handle) } != ERROR_SUCCESS {
+        return None;
+    }
+
+    let params = [
+        (&sources.tmf_file, TDH_CONTEXT_WPP_TMFFILE),
+        (&sources.tmf_search_path, TDH_CONTEXT_WPP_TMFSEARCHPATH),
+        (&sources.pdb_path, TDH_CONTEXT_PDB_PATH),
+    ];
+    for (value, kind) in params {
+        let Some(text) = value else { continue };
+        let mut utf16: Vec<u16> = text.encode_utf16().collect();
+        utf16.push(0);
+        let context = TDH_CONTEXT {
             ParameterValue: utf16.as_ptr() as u64,
-            ParameterType: TDH_CONTEXT_WPP_TMFSEARCHPATH,
+            ParameterType: kind,
             ParameterSize: 0,
-        }],
-        None => Vec::new(),
+        };
+        // TDH copies what it needs; `utf16` only has to outlive this call.
+        if unsafe { TdhSetDecodingParameter(handle, &context) } != ERROR_SUCCESS {
+            unsafe {
+                let _ = TdhCloseDecodingHandle(handle);
+            }
+            return None;
+        }
+    }
+    Some(handle)
+}
+
+/// The decoded WPP message for an event, if format information is configured
+/// and covers it.
+///
+/// `None` when no source has been set, when the event is not WPP, or when TDH
+/// has nothing for this trace GUID.
+pub fn wpp_message(record: &EventRecord) -> Option<String> {
+    if !WPP_CONFIGURED.load(Ordering::Relaxed) {
+        return None;
+    }
+    let raw = as_raw_record(record);
+
+    // Only ask about events TDH actually decodes as WPP. `TdhGetWppMessage` will
+    // happily return something for other events too, which showed up as a
+    // `FormattedString` appearing on Kernel-Process events the moment any WPP
+    // source was configured.
+    if !layout_for(record, raw)?.is_wpp {
+        return None;
+    }
+
+    let mut slot = wpp_handle().lock();
+    if slot.is_none() {
+        *slot = open_wpp_handle(&wpp_sources().lock());
+    }
+    let handle = (*slot)?;
+
+    // Unlike the rest of TDH, the sizing call reports ERROR_SUCCESS rather than
+    // ERROR_INSUFFICIENT_BUFFER when handed a null buffer -- it fills in the
+    // size and returns as if it had done the work. Rejecting that was what made
+    // an otherwise working decode look like "no format information".
+    // ERROR_INVALID_PARAMETER here simply means the event is not WPP.
+    let mut size: u32 = 0;
+    let status = unsafe { TdhGetWppMessage(handle, raw, &mut size, std::ptr::null_mut()) };
+    if (status != ERROR_SUCCESS && status != ERROR_INSUFFICIENT_BUFFER) || size == 0 {
+        return None;
+    }
+    let mut buf = vec![0u8; size as usize];
+    let status = unsafe { TdhGetWppMessage(handle, raw, &mut size, buf.as_mut_ptr()) };
+    if status != ERROR_SUCCESS {
+        return None;
+    }
+
+    let text = decode_utf16(&buf);
+    let text = text.trim_end_matches(['\r', '\n', '\0']);
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
     }
 }
 
@@ -275,13 +410,10 @@ fn wide_string_at(buf: &[u8], offset: u32) -> Option<String> {
 ///
 /// `record` must point to a valid `EVENT_RECORD` that stays alive for the call.
 unsafe fn read_layout(record: *const EVENT_RECORD) -> Option<EventLayout> {
-    // Held across both calls so the path it points at stays alive for TDH.
-    let path = tmf_search_path().lock();
-    let contexts = tdh_contexts(&path);
-    let contexts = (!contexts.is_empty()).then_some(contexts.as_slice());
-
+    // No `TDH_CONTEXT` here: TDH ignores WPP format sources given to this call.
+    // They only take effect through a decoding handle -- see `wpp_message`.
     let mut size: u32 = 0;
-    let status = unsafe { TdhGetEventInformation(record, contexts, None, &mut size) };
+    let status = unsafe { TdhGetEventInformation(record, None, None, &mut size) };
     if status != ERROR_INSUFFICIENT_BUFFER || size == 0 {
         // Anything else means TDH has no manifest/MOF/WPP schema for this event.
         return None;
@@ -293,7 +425,7 @@ unsafe fn read_layout(record: *const EVENT_RECORD) -> Option<EventLayout> {
     let mut buf: Vec<u64> = vec![0u64; size.div_ceil(8) as usize];
     let info_ptr = buf.as_mut_ptr() as *mut TRACE_EVENT_INFO;
 
-    let status = unsafe { TdhGetEventInformation(record, contexts, Some(info_ptr), &mut size) };
+    let status = unsafe { TdhGetEventInformation(record, None, Some(info_ptr), &mut size) };
     if status != ERROR_SUCCESS {
         return None;
     }
@@ -372,6 +504,7 @@ unsafe fn read_layout(record: *const EVENT_RECORD) -> Option<EventLayout> {
     }
 
     Some(EventLayout {
+        is_wpp: info.DecodingSource == DecodingSourceWPP,
         properties,
         top_level_count,
     })
@@ -1109,18 +1242,14 @@ fn pointer_size_of(record: &EventRecord) -> usize {
 ///
 /// `record` must point to a valid `EVENT_RECORD` that stays alive for the call.
 unsafe fn read_event_information(record: *const EVENT_RECORD) -> Option<Vec<u64>> {
-    let path = tmf_search_path().lock();
-    let contexts = tdh_contexts(&path);
-    let contexts = (!contexts.is_empty()).then_some(contexts.as_slice());
-
     let mut size: u32 = 0;
-    let status = unsafe { TdhGetEventInformation(record, contexts, None, &mut size) };
+    let status = unsafe { TdhGetEventInformation(record, None, None, &mut size) };
     if status != ERROR_INSUFFICIENT_BUFFER || size == 0 {
         return None;
     }
     let mut buf: Vec<u64> = vec![0u64; size.div_ceil(8) as usize];
     let ptr = buf.as_mut_ptr() as *mut TRACE_EVENT_INFO;
-    let status = unsafe { TdhGetEventInformation(record, contexts, Some(ptr), &mut size) };
+    let status = unsafe { TdhGetEventInformation(record, None, Some(ptr), &mut size) };
     if status != ERROR_SUCCESS {
         return None;
     }
@@ -1200,6 +1329,35 @@ pub fn py_wpp_tmf_search_path() -> Option<String> {
     wpp_tmf_search_path()
 }
 
+/// Point TDH at a single WPP `.tmf` file, or pass `None` to stop.
+#[pyfunction]
+#[pyo3(signature = (path=None))]
+pub fn py_set_wpp_tmf_file(path: Option<&str>) {
+    set_wpp_tmf_file(path);
+}
+
+/// The `.tmf` file currently configured, if any.
+#[pyfunction]
+pub fn py_wpp_tmf_file() -> Option<String> {
+    wpp_tmf_file()
+}
+
+/// Point TDH at the `.pdb` of the binary that emitted the WPP events.
+///
+/// Usually the easiest of the three: no need to run `tracepdb` to turn the PDB
+/// into a `.tmf` first.
+#[pyfunction]
+#[pyo3(signature = (path=None))]
+pub fn py_set_wpp_pdb_path(path: Option<&str>) {
+    set_wpp_pdb_path(path);
+}
+
+/// The `.pdb` currently configured, if any.
+#[pyfunction]
+pub fn py_wpp_pdb_path() -> Option<String> {
+    wpp_pdb_path()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1243,23 +1401,37 @@ mod tests {
     }
 
     #[test]
-    fn test_tmf_search_path_round_trips() {
+    fn test_wpp_sources_round_trip() {
         assert_eq!(wpp_tmf_search_path(), None);
+        assert_eq!(wpp_tmf_file(), None);
+        assert_eq!(wpp_pdb_path(), None);
+        assert!(!WPP_CONFIGURED.load(Ordering::Relaxed));
+
         set_wpp_tmf_search_path(Some(r"C:\tmf"));
+        set_wpp_tmf_file(Some(r"C:\tmf\a.tmf"));
+        set_wpp_pdb_path(Some(r"C:\bin\a.pdb"));
         assert_eq!(wpp_tmf_search_path().as_deref(), Some(r"C:\tmf"));
+        assert_eq!(wpp_tmf_file().as_deref(), Some(r"C:\tmf\a.tmf"));
+        assert_eq!(wpp_pdb_path().as_deref(), Some(r"C:\bin\a.pdb"));
+        assert!(WPP_CONFIGURED.load(Ordering::Relaxed));
+
+        // Clearing one at a time: the flag only drops once none are left, since
+        // it is what lets the common path skip WPP work entirely.
         set_wpp_tmf_search_path(None);
-        assert_eq!(wpp_tmf_search_path(), None);
+        assert!(WPP_CONFIGURED.load(Ordering::Relaxed));
+        set_wpp_tmf_file(None);
+        assert!(WPP_CONFIGURED.load(Ordering::Relaxed));
+        set_wpp_pdb_path(None);
+        assert!(!WPP_CONFIGURED.load(Ordering::Relaxed));
     }
 
     #[test]
-    fn test_no_tmf_path_means_no_tdh_context() {
-        // The common path must hand TDH nothing, exactly as before the WPP
-        // search path existed.
-        assert!(tdh_contexts(&None).is_empty());
-        let path: Vec<u16> = "x\0".encode_utf16().collect();
-        let contexts = tdh_contexts(&Some(path));
-        assert_eq!(contexts.len(), 1);
-        assert_eq!(contexts[0].ParameterType, TDH_CONTEXT_WPP_TMFSEARCHPATH);
+    fn test_wpp_message_is_none_when_nothing_is_configured() {
+        // The guard has to come before the record is touched: passing a null
+        // record proves nothing is dereferenced on the unconfigured path.
+        assert!(!WPP_CONFIGURED.load(Ordering::Relaxed));
+        let sources = WppSources::default();
+        assert!(sources.is_empty());
     }
 
     #[test]
@@ -1449,6 +1621,7 @@ mod tests {
         // dereference the null record, so passing proves it short-circuits.
         let layout = EventLayout {
             properties: vec![PropertyDesc::placeholder()],
+            is_wpp: false,
             top_level_count: 1,
         };
         let mut prop = array_desc(IN_UINT32, 0);
@@ -1462,6 +1635,7 @@ mod tests {
         // struct members that are not in the vector at all.
         let layout = EventLayout {
             properties: vec![PropertyDesc::placeholder()],
+            is_wpp: false,
             top_level_count: 1,
         };
         let mut prop = array_desc(IN_UINT32, 0);
@@ -1478,6 +1652,7 @@ mod tests {
         prop.struct_members = 1;
         let layout = EventLayout {
             properties: vec![prop.clone()],
+            is_wpp: false,
             top_level_count: 1,
         };
         let value = read_value(

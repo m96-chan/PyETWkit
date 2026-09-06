@@ -17,6 +17,8 @@ A modern, high-performance ETW (Event Tracing for Windows) toolkit for Python, p
 - **Kernel providers**: process, thread, registry, file, disk, network
 - **User providers**: DNS, Audio, and more via profiles
 - **ETL file reading**: Parse existing trace logs
+- **Full property decoding** via TDH: arrays, nested structures, SIDs, and WPP
+  events given a PDB or `.tmf` — see [Event Properties](docs/advanced/event_properties.rst)
 - **Rust backend (pyo3)**: High throughput, zero-copy event delivery
 - Windows 10 / 11 / Server supported
 
@@ -268,6 +270,7 @@ Windows ETW subsystem
 - [API Reference](docs/api/) - Detailed API documentation
 - [Examples](examples/) - Sample scripts
 - [Architecture](docs/architecture/) - Design documents
+- [Event Properties](docs/advanced/event_properties.rst) - How values are decoded, display strings, raw payloads, and WPP
 
 ---
 
