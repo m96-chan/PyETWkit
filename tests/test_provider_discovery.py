@@ -6,7 +6,7 @@ import pytest
 def check_extension_available() -> bool:
     """Check if native extension is available."""
     try:
-        import pyetwkit_core  # noqa: F401
+        from pyetwkit import _core  # noqa: F401
 
         return True
     except ImportError:
@@ -25,7 +25,7 @@ class TestListProviders:
 
     def test_list_providers_returns_list(self) -> None:
         """Test that list_providers returns a non-empty list."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         providers = pyetwkit_core.list_providers()
         assert isinstance(providers, list)
@@ -33,7 +33,7 @@ class TestListProviders:
 
     def test_list_providers_contains_kernel_process(self) -> None:
         """Test that kernel process provider is in the list."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         providers = pyetwkit_core.list_providers()
         names = [p.name for p in providers]
@@ -43,7 +43,7 @@ class TestListProviders:
 
     def test_provider_info_has_guid(self) -> None:
         """Test that provider info includes GUID."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         providers = pyetwkit_core.list_providers()
         assert len(providers) > 0
@@ -55,7 +55,7 @@ class TestListProviders:
 
     def test_provider_info_has_name(self) -> None:
         """Test that provider info includes name."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         providers = pyetwkit_core.list_providers()
         assert len(providers) > 0
@@ -69,7 +69,7 @@ class TestSearchProviders:
 
     def test_search_providers_by_keyword(self) -> None:
         """Test searching providers by keyword."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         results = pyetwkit_core.search_providers("Kernel")
         assert isinstance(results, list)
@@ -79,7 +79,7 @@ class TestSearchProviders:
 
     def test_search_providers_case_insensitive(self) -> None:
         """Test that search is case insensitive."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         results_lower = pyetwkit_core.search_providers("kernel")
         results_upper = pyetwkit_core.search_providers("KERNEL")
@@ -88,7 +88,7 @@ class TestSearchProviders:
 
     def test_search_providers_no_match(self) -> None:
         """Test searching with no matching providers."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         results = pyetwkit_core.search_providers("xyznonexistent123")
         assert isinstance(results, list)
@@ -100,7 +100,7 @@ class TestGetProviderInfo:
 
     def test_get_provider_info_by_name(self) -> None:
         """Test getting provider info by name."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         info = pyetwkit_core.get_provider_info("Microsoft-Windows-Kernel-Process")
         assert info is not None
@@ -109,7 +109,7 @@ class TestGetProviderInfo:
 
     def test_get_provider_info_by_guid(self) -> None:
         """Test getting provider info by GUID."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         info = pyetwkit_core.get_provider_info("22fb2cd6-0e7b-422b-a0c7-2fad1fd0e716")
         assert info is not None
@@ -117,14 +117,14 @@ class TestGetProviderInfo:
 
     def test_get_provider_info_not_found(self) -> None:
         """Test getting info for non-existent provider."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         info = pyetwkit_core.get_provider_info("nonexistent-provider")
         assert info is None
 
     def test_get_provider_info_has_keywords(self) -> None:
         """Test that provider info includes keywords."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         info = pyetwkit_core.get_provider_info("Microsoft-Windows-Kernel-Process")
         assert info is not None
@@ -138,7 +138,7 @@ class TestProviderInfo:
 
     def test_provider_info_repr(self) -> None:
         """Test ProviderInfo string representation."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         providers = pyetwkit_core.list_providers()
         assert len(providers) > 0
@@ -147,7 +147,7 @@ class TestProviderInfo:
 
     def test_provider_info_equality(self) -> None:
         """Test ProviderInfo equality comparison."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         providers1 = pyetwkit_core.list_providers()
         providers2 = pyetwkit_core.list_providers()

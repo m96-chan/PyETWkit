@@ -6,7 +6,7 @@ import pytest
 def check_extension_available() -> bool:
     """Check if native extension is available."""
     try:
-        import pyetwkit_core  # noqa: F401
+        from pyetwkit import _core  # noqa: F401
 
         return True
     except ImportError:
@@ -25,13 +25,13 @@ class TestEventSchema:
 
     def test_event_schema_class_exists(self) -> None:
         """Test that EventSchema class exists."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         assert hasattr(pyetwkit_core, "EventSchema")
 
     def test_event_schema_has_properties(self) -> None:
         """Test that EventSchema has properties attribute."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         # Check class definition
         schema_class = pyetwkit_core.EventSchema
@@ -43,7 +43,7 @@ class TestSchemaLocator:
 
     def test_schema_locator_exists(self) -> None:
         """Test that SchemaCache or EventSchema exists."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         # SchemaCache serves as the locator/cache
         assert hasattr(pyetwkit_core, "SchemaCache") or hasattr(pyetwkit_core, "EventSchema")
@@ -54,13 +54,13 @@ class TestPropertyInfo:
 
     def test_property_info_exists(self) -> None:
         """Test that PropertyInfo class exists."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         assert hasattr(pyetwkit_core, "PropertyInfo")
 
     def test_property_info_has_name(self) -> None:
         """Test that PropertyInfo has name attribute."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         if hasattr(pyetwkit_core, "PropertyInfo"):
             # Check class attributes
@@ -70,7 +70,7 @@ class TestPropertyInfo:
 
     def test_property_info_has_type(self) -> None:
         """Test that PropertyInfo has type information."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         if hasattr(pyetwkit_core, "PropertyInfo"):
             prop_class = pyetwkit_core.PropertyInfo
@@ -82,7 +82,7 @@ class TestSchemaCache:
 
     def test_schema_cache_exists(self) -> None:
         """Test that schema caching is available."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         # Either a cache class or caching built into SchemaLocator
         has_cache = (
@@ -98,14 +98,14 @@ class TestEventProperties:
 
     def test_event_has_properties_dict(self) -> None:
         """Test that EtwEvent has properties as dict."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         event_class = pyetwkit_core.EtwEvent
         assert hasattr(event_class, "properties")
 
     def test_event_property_access(self) -> None:
         """Test that event properties can be accessed."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         event_class = pyetwkit_core.EtwEvent
         # The properties attribute should exist

@@ -9,7 +9,7 @@ import pytest
 def check_extension_available() -> bool:
     """Check if native extension is available."""
     try:
-        import pyetwkit_core  # noqa: F401
+        from pyetwkit import _core  # noqa: F401
 
         return True
     except ImportError:
@@ -28,14 +28,14 @@ class TestEventToDict:
 
     def test_event_has_to_dict(self) -> None:
         """Test that EtwEvent has to_dict method."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         event_class = pyetwkit_core.EtwEvent
         assert hasattr(event_class, "to_dict")
 
     def test_event_to_dict_returns_dict(self) -> None:
         """Test that to_dict returns a dictionary."""
-        import pyetwkit_core
+        from pyetwkit import _core as pyetwkit_core
 
         # Create a mock event or use the class definition
         event_class = pyetwkit_core.EtwEvent
