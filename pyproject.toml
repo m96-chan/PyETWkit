@@ -54,6 +54,10 @@ docs = [
 ]
 dashboard = [
     "gradio>=4.0",
+    # dashboard.py imports pandas directly, without the guard it puts around
+    # gradio. It only works today because gradio happens to depend on pandas;
+    # declare it rather than rely on another package's dependency list.
+    "pandas>=2.0",
 ]
 
 [project.urls]
