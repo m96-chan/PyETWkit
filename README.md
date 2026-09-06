@@ -290,6 +290,21 @@ Windows ETW subsystem
 
 ## Changelog
 
+### v3.2.0 (2026-09)
+
+- **OpenTelemetry export actually sends** (#90). Spans are POSTed to `/v1/traces`
+  as OTLP/HTTP with JSON encoding, using only the standard library — no new
+  dependency. `flush()` returns `False` and logs the reason on failure, keeping
+  the batch so events can be retried rather than lost
+- Fixed: the OTLP JSON encoding sent enum *names*, which a collector rejects.
+  The spec allows integers only, so `kind` and `status.code` are now numbers
+- Fixed: `event_to_span()` crashed on every real event. `EtwEvent.timestamp` is
+  an RFC 3339 string and the code called `float()` on it; only mocks and plain
+  numbers had ever been passed to it
+
+Note the OTLP/HTTP port is **4318**. The 4317 in earlier examples is the gRPC
+port and will not answer an HTTP request.
+
 ### v3.1.0 (2026-09)
 
 Event properties are now decoded from the schema via TDH, rather than guessed
