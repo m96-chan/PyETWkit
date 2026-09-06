@@ -225,3 +225,76 @@ jobs:
           # Unset simply falls back to the tokenless path.
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
+
+  install-from-pyproject:
+    name: Install through pyproject.toml
+    runs-on: windows-latest
+    needs: [lint-rust, lint-python, test-rust]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: ""
+
+      - name: Set up Python
+        run: |
+          uv python install 3.11
+          uv venv --python 3.11
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-pyproject-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-pyproject-
+
+      # Deliberately no `-m crates/pyetwkit-core/Cargo.toml` anywhere in this job.
+      # Every other build passes it, which is what let a broken `[tool.maturin]`
+      # stay invisible through green CI (#79). This job is the one that resolves
+      # the manifest the way `pip install .` does.
+      - name: Install from the working tree
+        run: uv pip install .
+
+      - name: Import the installed package
+        # Run from outside the workspace so `src/pyetwkit` cannot shadow the
+        # installed distribution and make a failed build look like a success.
+        run: |
+          cd $env:TEMP
+          & "$env:GITHUB_WORKSPACE\.venv\Scripts\python.exe" -c "import pyetwkit; from pyetwkit import _core; print(pyetwkit.__version__); print(_core.EtlReader); assert _core.list_providers()"
+          & "$env:GITHUB_WORKSPACE\.venv\Scripts\pyetwkit.exe" --help
+        shell: pwsh
+
+      - name: Build an sdist through pyproject.toml
+        run: |
+          uv pip install maturin
+          if (Test-Path target/sdist) { Remove-Item -Recurse -Force target/sdist }
+          .venv\Scripts\maturin.exe sdist --out target/sdist
+        shell: pwsh
+
+      - name: Install from the sdist
+        # An sdist that unpacks but cannot compile fails only for users
+        # installing from source on an unsupported platform, so build it here.
+        run: |
+          $sdist = Get-ChildItem target/sdist/*.tar.gz | Select-Object -First 1
+          if ($sdist -eq $null) { Write-Host "ERROR: no sdist produced"; exit 1 }
+          Write-Host "Installing sdist: $($sdist.Name)"
+          uv pip install --reinstall "$($sdist.FullName)"
+        shell: pwsh
+
+      - name: Import the package built from the sdist
+        run: |
+          cd $env:TEMP
+          & "$env:GITHUB_WORKSPACE\.venv\Scripts\python.exe" -c "import pyetwkit; from pyetwkit import _core; print(pyetwkit.__version__); assert _core.list_providers()"
+        shell: pwsh
