@@ -274,6 +274,24 @@ Windows ETW subsystem
 
 ## Changelog
 
+### v3.1.0 (2026-09)
+
+Event properties are now decoded from the schema via TDH, rather than guessed
+from a list of twelve names. See [Event Properties](docs/advanced/event_properties.rst).
+
+- **All properties decoded**: whatever the provider declares, not a guess list (#72, #76)
+- **Arrays and nested structures**: lists and dicts, instead of only the first element (#84)
+- **WPP events**: decoded given a `.pdb` or `.tmf` — `set_wpp_pdb_path()` needs no SDK tooling (#72)
+- **Undecodable events keep their payload** in `raw_data` instead of losing it
+- **`formatted_properties`**: TDH's own display strings, opt-in, with value maps resolved
+- Correct SIDs, `win:Boolean`, pointer widths from 32-bit processes, and counted strings
+- **`pip install .` works** — it never had (#79)
+- `OtlpExporter` no longer reports success while discarding events; its transport
+  was never implemented (#88). `OtlpFileExporter` is unaffected
+
+_Note: v3.0.2 was tagged and released on GitHub but never reached PyPI, so this
+is the first release since v3.0.1 that PyPI users will see._
+
 ### v3.0.0 (2024-12)
 - **Live Dashboard**: Gradio-based real-time UI (`pyetwkit dashboard` CLI)
 - **Event Correlation Engine**: Link events by PID/TID/Handle with timeline export
