@@ -1,0 +1,9 @@
+// PDB:  wpptest.pdb
+// PDB:  Last Updated :2026-09-06:03:28:48:152 (UTC) [tracepdb]
+5bf6e80b-6122-3dde-7c2d-419eb7880414 wpp // SRC=wpptest.c MJ= MN=
+#typev wpptest_c25 10 "%0wpp probe seq=%10!d! name=%11!s! value=0x%12!x!" //   LEVEL=TEST_ALL FUNC=main
+{
+i, ItemLong -- 10
+'core-state', ItemString -- 11
+0x50C0 + i, ItemLong -- 12
+}

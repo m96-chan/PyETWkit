@@ -430,41 +430,123 @@ class TestPropertyFormatting:
         assert pyetwkit_core.property_formatting() is False
 
 
-class TestWppTmfSearchPath:
-    """WPP needs a .tmf to decode; this is how one is offered to TDH."""
+WPP_ETL_PATH = Path(__file__).parent / "fixtures" / "wpp.etl"
+WPP_TMF_DIR = Path(__file__).parent / "fixtures" / "wpp_tmf"
 
-    def test_search_path_is_unset_by_default(self) -> None:
+requires_wpp_etl = pytest.mark.skipif(
+    not WPP_ETL_PATH.exists() or not WPP_TMF_DIR.is_dir(),
+    reason="Requires the WPP ETL fixture and its TMF",
+)
+
+# What tracefmt, Microsoft's own formatter, makes of the same capture given the
+# same TMF directory. Anything else is wrong.
+WPP_EXPECTED = [
+    "wpp probe seq=0 name=core-state value=0x50c0",
+    "wpp probe seq=1 name=core-state value=0x50c1",
+    "wpp probe seq=2 name=core-state value=0x50c2",
+]
+
+
+def _clear_wpp_sources() -> None:
+    from pyetwkit import _core as pyetwkit_core
+
+    pyetwkit_core.set_wpp_tmf_search_path(None)
+    pyetwkit_core.set_wpp_tmf_file(None)
+    pyetwkit_core.set_wpp_pdb_path(None)
+
+
+def _wpp_messages() -> list[str]:
+    from pyetwkit import _core as pyetwkit_core
+
+    return [
+        e.properties["FormattedString"]
+        for e in pyetwkit_core.EtlReader(str(WPP_ETL_PATH)).read_all()
+        if "FormattedString" in e.properties
+    ]
+
+
+class TestWppDecoding:
+    """WPP events decode only when format information is supplied.
+
+    They carry no schema of their own: the format strings live in a ``.tmf``
+    generated from the emitting binary's PDB (see
+    ``fixtures/create_wpp_etl.ps1``). Without one TDH only ever says "No Format
+    Information found", which is exactly what the first test pins down.
+    """
+
+    def teardown_method(self) -> None:
+        _clear_wpp_sources()
+
+    @requires_wpp_etl
+    def test_without_format_information_the_message_is_a_placeholder(self) -> None:
+        _clear_wpp_sources()
+        messages = _wpp_messages()
+        assert messages, "fixture carried no WPP events"
+        assert all("No Format Information found" in m for m in messages)
+
+    @requires_wpp_etl
+    def test_a_tmf_search_path_decodes_the_messages(self) -> None:
+        from pyetwkit import _core as pyetwkit_core
+
+        _clear_wpp_sources()
+        pyetwkit_core.set_wpp_tmf_search_path(str(WPP_TMF_DIR))
+        assert _wpp_messages() == WPP_EXPECTED
+
+    @requires_wpp_etl
+    def test_a_single_tmf_file_decodes_the_messages(self) -> None:
+        from pyetwkit import _core as pyetwkit_core
+
+        tmfs = sorted(WPP_TMF_DIR.glob("*.tmf"))
+        assert tmfs, "no .tmf alongside the WPP fixture"
+
+        _clear_wpp_sources()
+        pyetwkit_core.set_wpp_tmf_file(str(tmfs[0]))
+        assert _wpp_messages() == WPP_EXPECTED
+
+    @requires_wpp_etl
+    def test_clearing_the_source_goes_back_to_the_placeholder(self) -> None:
+        """The sources are live: a decode must not stick around after removal."""
+        from pyetwkit import _core as pyetwkit_core
+
+        _clear_wpp_sources()
+        pyetwkit_core.set_wpp_tmf_search_path(str(WPP_TMF_DIR))
+        assert _wpp_messages() == WPP_EXPECTED
+
+        _clear_wpp_sources()
+        assert all("No Format Information found" in m for m in _wpp_messages())
+
+    def test_sources_are_unset_by_default(self) -> None:
         from pyetwkit import _core as pyetwkit_core
 
         assert pyetwkit_core.wpp_tmf_search_path() is None
+        assert pyetwkit_core.wpp_tmf_file() is None
+        assert pyetwkit_core.wpp_pdb_path() is None
 
-    def test_search_path_round_trips(self) -> None:
+    def test_sources_round_trip(self) -> None:
         from pyetwkit import _core as pyetwkit_core
 
         try:
-            pyetwkit_core.set_wpp_tmf_search_path(r"C:\tmf")
-            assert pyetwkit_core.wpp_tmf_search_path() == r"C:\tmf"
+            pyetwkit_core.set_wpp_tmf_file(r"C:\tmf\a.tmf")
+            pyetwkit_core.set_wpp_pdb_path(r"C:\bin\a.pdb")
+            assert pyetwkit_core.wpp_tmf_file() == r"C:\tmf\a.tmf"
+            assert pyetwkit_core.wpp_pdb_path() == r"C:\bin\a.pdb"
         finally:
-            pyetwkit_core.set_wpp_tmf_search_path(None)
-        assert pyetwkit_core.wpp_tmf_search_path() is None
+            _clear_wpp_sources()
+        assert pyetwkit_core.wpp_tmf_file() is None
+        assert pyetwkit_core.wpp_pdb_path() is None
 
-    @requires_no_schema_etl
-    def test_setting_a_search_path_does_not_disturb_other_decoding(self) -> None:
-        """A path that matches nothing must leave every other event alone."""
+    @requires_wpp_etl
+    def test_a_source_that_matches_nothing_leaves_other_events_alone(self) -> None:
         from pyetwkit import _core as pyetwkit_core
 
-        path = str(NO_SCHEMA_ETL_PATH)
-
-        def snapshot() -> list[tuple[int, tuple[str, ...]]]:
-            return [
-                (e.event_id, tuple(sorted(e.properties)))
-                for e in pyetwkit_core.EtlReader(path).read_all()
-            ]
-
-        before = snapshot()
-        try:
-            pyetwkit_core.set_wpp_tmf_search_path(r"Z:\no\such\directory")
-            assert snapshot() == before
-        finally:
-            pyetwkit_core.set_wpp_tmf_search_path(None)
-        assert snapshot() == before
+        _clear_wpp_sources()
+        before = [
+            (e.event_id, tuple(sorted(e.properties)))
+            for e in pyetwkit_core.EtlReader(str(SAMPLE_ETL_PATH)).read_all()
+        ]
+        pyetwkit_core.set_wpp_tmf_search_path(r"Z:\no\such\directory")
+        after = [
+            (e.event_id, tuple(sorted(e.properties)))
+            for e in pyetwkit_core.EtlReader(str(SAMPLE_ETL_PATH)).read_all()
+        ]
+        assert after == before
