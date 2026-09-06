@@ -11,6 +11,7 @@ import logging
 import re
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -35,6 +36,48 @@ OTLP_TRACES_PATH = "/v1/traces"
 # https://opentelemetry.io/docs/specs/otlp/
 SPAN_KIND_INTERNAL = 1
 STATUS_CODE_OK = 1
+
+
+# The field names an event is expected to carry. Used both to read values and
+# to tell an event from something that is not one at all.
+_EVENT_FIELDS = (
+    "event_id",
+    "provider_name",
+    "timestamp",
+    "process_id",
+    "thread_id",
+    "properties",
+)
+
+
+def _event_field(event: Any, name: str, default: Any) -> Any:
+    """Read one field, whether the event is a mapping or an object.
+
+    `getattr` alone quietly returned the default for every field of a `dict`, so
+    a dict event produced a span named "unknown.0" with no provider and no PID --
+    no error, just wrong. `pyetwkit.export` has always accepted both shapes; this
+    brings the OTLP side into line with it.
+    """
+    if isinstance(event, Mapping):
+        value = event.get(name, default)
+    else:
+        value = getattr(event, name, default)
+    return default if value is None else value
+
+
+def _require_event(event: Any) -> None:
+    """Reject something that is not an event at all.
+
+    Without this a string or an int would sail through and produce a span of
+    defaults, which is the failure this whole change is about.
+    """
+    if isinstance(event, Mapping):
+        return
+    if any(hasattr(event, field) for field in _EVENT_FIELDS):
+        return
+    raise TypeError(
+        f"expected an ETW event or a mapping of event fields, got {type(event).__name__}"
+    )
 
 
 def _timestamp_seconds(raw: Any) -> float:
@@ -166,8 +209,8 @@ class SpanMapper:
         Returns:
             Span name or None if no rule matches.
         """
-        provider = getattr(event, "provider_name", "")
-        event_id = getattr(event, "event_id", 0)
+        provider = _event_field(event, "provider_name", "")
+        event_id = _event_field(event, "event_id", 0)
 
         for rule in self._rules:
             if rule.provider == provider and rule.event_id == event_id:
@@ -184,9 +227,9 @@ class SpanMapper:
         Returns:
             Dictionary of attributes.
         """
-        provider = getattr(event, "provider_name", "")
-        event_id = getattr(event, "event_id", 0)
-        properties = getattr(event, "properties", {})
+        provider = _event_field(event, "provider_name", "")
+        event_id = _event_field(event, "event_id", 0)
+        properties = _event_field(event, "properties", {})
 
         for rule in self._rules:
             if rule.provider == provider and rule.event_id == event_id:
@@ -550,12 +593,13 @@ def event_to_span(
     Returns:
         Span dictionary in OTLP format.
     """
-    event_id = getattr(event, "event_id", 0)
-    provider_name = getattr(event, "provider_name", "unknown")
-    raw_timestamp = getattr(event, "timestamp", time.time())
-    process_id = getattr(event, "process_id", 0)
-    thread_id = getattr(event, "thread_id", 0)
-    properties = getattr(event, "properties", {})
+    _require_event(event)
+    event_id = _event_field(event, "event_id", 0)
+    provider_name = _event_field(event, "provider_name", "unknown")
+    raw_timestamp = _event_field(event, "timestamp", time.time())
+    process_id = _event_field(event, "process_id", 0)
+    thread_id = _event_field(event, "thread_id", 0)
+    properties = _event_field(event, "properties", {})
 
     timestamp = _timestamp_seconds(raw_timestamp)
 
@@ -591,11 +635,12 @@ def event_to_log(
     Returns:
         Log dictionary in OTLP format.
     """
-    event_id = getattr(event, "event_id", 0)
-    provider_name = getattr(event, "provider_name", "unknown")
-    raw_timestamp = getattr(event, "timestamp", time.time())
-    process_id = getattr(event, "process_id", 0)
-    properties = getattr(event, "properties", {})
+    _require_event(event)
+    event_id = _event_field(event, "event_id", 0)
+    provider_name = _event_field(event, "provider_name", "unknown")
+    raw_timestamp = _event_field(event, "timestamp", time.time())
+    process_id = _event_field(event, "process_id", 0)
+    properties = _event_field(event, "properties", {})
 
     timestamp = _timestamp_seconds(raw_timestamp)
 

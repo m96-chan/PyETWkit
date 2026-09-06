@@ -375,3 +375,97 @@ class TestOtlpFileExport:
 
         assert hasattr(OtlpFileFormat, "JSON")
         assert hasattr(OtlpFileFormat, "PROTOBUF")
+
+
+EVENT_FIELDS = {
+    "provider_name": "Microsoft-Windows-Kernel-Process",
+    "event_id": 1,
+    "process_id": 4104,
+    "thread_id": 512,
+    "timestamp": 1788613764.0,
+    "properties": {"ImageName": "cmd.exe"},
+}
+
+
+def _attrs(span: dict) -> dict:
+    return {a["key"]: a["value"] for a in span["attributes"]}
+
+
+class TestEventShapes:
+    """A mapping and an object describing the same event must agree.
+
+    `event_to_span` read events with `getattr` only, so a dict produced a span
+    named "unknown.0" with no provider and no PID -- no error, just wrong.
+    `pyetwkit.export` has always accepted both shapes.
+    """
+
+    def test_event_to_span_reads_a_dict_the_same_as_an_object(self) -> None:
+        from types import SimpleNamespace
+
+        from pyetwkit.exporters import event_to_span
+
+        from_dict = event_to_span(dict(EVENT_FIELDS))
+        from_object = event_to_span(SimpleNamespace(**EVENT_FIELDS))
+
+        assert from_dict["name"] == from_object["name"] == "Microsoft-Windows-Kernel-Process.1"
+        assert from_dict["startTimeUnixNano"] == from_object["startTimeUnixNano"]
+
+        for key in ("etw.provider", "etw.event_id", "process.pid", "thread.id", "etw.ImageName"):
+            assert _attrs(from_dict)[key] == _attrs(from_object)[key], key
+
+    def test_event_to_log_reads_a_dict_too(self) -> None:
+        from types import SimpleNamespace
+
+        from pyetwkit.exporters import event_to_log
+
+        from_dict = event_to_log(dict(EVENT_FIELDS))
+        from_object = event_to_log(SimpleNamespace(**EVENT_FIELDS))
+
+        assert from_dict["timeUnixNano"] == from_object["timeUnixNano"]
+
+    def test_span_mapper_matches_a_dict(self) -> None:
+        from pyetwkit.exporters import SpanMapper
+
+        mapper = SpanMapper()
+        mapper.add_rule(
+            provider="Microsoft-Windows-Kernel-Process",
+            event_id=1,
+            span_name="process.start",
+            attributes=["ImageName"],
+        )
+
+        assert mapper.get_span_name(dict(EVENT_FIELDS)) == "process.start"
+        assert mapper.extract_attributes(dict(EVENT_FIELDS)) == {"ImageName": "cmd.exe"}
+
+    def test_a_dict_event_survives_the_whole_exporter(self) -> None:
+        """The path a caller actually takes, not just the helper."""
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from pyetwkit.exporters import OtlpFileExporter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "traces.json"
+            exporter = OtlpFileExporter(str(out))
+            exporter.export(dict(EVENT_FIELDS))
+            assert exporter.flush() is True
+
+            span = json.loads(out.read_text(encoding="utf-8"))["spans"][0]
+            assert span["name"] == "Microsoft-Windows-Kernel-Process.1"
+
+    def test_something_that_is_not_an_event_is_rejected(self) -> None:
+        """Fail rather than return a span of defaults."""
+        from pyetwkit.exporters import event_to_span
+
+        for junk in ("not an event", 42, None):
+            with pytest.raises(TypeError):
+                event_to_span(junk)
+
+    def test_a_missing_field_still_falls_back(self) -> None:
+        """A partial event is not junk; it just uses defaults for what is absent."""
+        from pyetwkit.exporters import event_to_span
+
+        span = event_to_span({"provider_name": "P", "event_id": 7})
+        assert span["name"] == "P.7"
+        assert _attrs(span)["process.pid"] == {"intValue": 0}
