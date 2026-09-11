@@ -179,7 +179,7 @@ jobs:
           uv venv --python ${{ matrix.python-version }}
 
       - name: Download wheels
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wheels-${{ matrix.python-version }}
           path: dist/
